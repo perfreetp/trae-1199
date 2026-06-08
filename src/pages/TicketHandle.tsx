@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, X, Clock, FileText, AlertCircle, Lightbulb, Image as ImgIcon, Timer } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
@@ -43,16 +43,62 @@ export default function TicketHandle() {
   const tickets = useTicketStore((s) => s.tickets);
   const currentTicket = tickets.find((t) => t.id === id);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [rootCause, setRootCause] = useState<RootCauseType>('data');
   const [reason, setReason] = useState('');
   const [solution, setSolution] = useState('');
   const [hours, setHours] = useState('');
   const [images, setImages] = useState<string[]>([]);
 
-  const addImage = () => {
-    if (images.length >= 9) return;
-    setImages([...images, `img_${Date.now()}_${images.length}`]);
+  const triggerFileSelect = () => {
+    if (images.length >= 9) {
+      showToast('最多上传9张图片', 'warning');
+      return;
+    }
+    fileInputRef.current?.click();
   };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const remainingSlots = 9 - images.length;
+    const filesToProcess = Array.from(files).slice(0, remainingSlots);
+
+    if (files.length > remainingSlots) {
+      showToast(`最多上传9张，本次仅选取${remainingSlots}张`, 'warning');
+    }
+
+    let processedCount = 0;
+    const newDataUrls: string[] = [];
+
+    filesToProcess.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        if (dataUrl) {
+          newDataUrls.push(dataUrl);
+        }
+        processedCount++;
+        if (processedCount === filesToProcess.length) {
+          setImages((prev) => [...prev, ...newDataUrls]);
+        }
+      };
+      reader.onerror = () => {
+        processedCount++;
+        if (processedCount === filesToProcess.length) {
+          setImages((prev) => [...prev, ...newDataUrls]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const removeImage = (idx: number) => {
     setImages(images.filter((_, i) => i !== idx));
   };
@@ -93,6 +139,15 @@ export default function TicketHandle() {
         onBack={() => navigate(-1)}
         actions={[]}
         onAction={() => {}}
+      />
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={handleFileChange}
       />
 
       <div className="mx-auto max-w-md px-4 pt-4 space-y-4">
@@ -149,11 +204,9 @@ export default function TicketHandle() {
             上传凭证（{images.length}/9）
           </FormLabel>
           <div className="grid grid-cols-3 gap-2">
-            {images.map((imgId, i) => (
-              <div key={imgId} className="relative aspect-square rounded-lg bg-white/5 border border-white/10 overflow-hidden">
-                <div className="h-full w-full bg-gradient-to-br from-brand/20 to-white/5 flex items-center justify-center">
-                  <ImgIcon size={20} className="text-white/30" />
-                </div>
+            {images.map((dataUrl, i) => (
+              <div key={`${i}_${dataUrl.length}`} className="relative aspect-square rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+                <img src={dataUrl} alt="" className="h-full w-full object-cover" />
                 <button
                   type="button"
                   onClick={() => removeImage(i)}
@@ -166,7 +219,7 @@ export default function TicketHandle() {
             {images.length < 9 && (
               <button
                 type="button"
-                onClick={addImage}
+                onClick={triggerFileSelect}
                 className="aspect-square rounded-lg bg-white/[0.02] border border-dashed border-white/10 flex flex-col items-center justify-center gap-1 text-white/30 hover:bg-white/5 hover:text-white/50 hover:border-white/20 transition-all duration-300"
               >
                 <Plus size={18} strokeWidth={2} />

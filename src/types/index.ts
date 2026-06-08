@@ -134,6 +134,28 @@ export interface AnomalyTicket {
   timestamps: TicketTimeline[];
   createdAt: string;
   detectedAt: string;
+  slaDeadline: string;
+  urgedCount: number;
+}
+
+export interface TicketComment {
+  id: string;
+  ticketId: string;
+  author: User;
+  content: string;
+  mentions: string[];
+  attachments: string[];
+  createdAt: string;
+}
+
+export interface ApprovalComment {
+  id: string;
+  requestId: string;
+  author: User;
+  content: string;
+  mentions: string[];
+  attachments: string[];
+  createdAt: string;
 }
 
 export interface Threshold {

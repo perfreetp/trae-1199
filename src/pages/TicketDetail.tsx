@@ -1,6 +1,17 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Clock, AlertTriangle, FileText, Users, Target } from 'lucide-react';
+import {
+  Clock,
+  AlertTriangle,
+  FileText,
+  Users,
+  Target,
+  Send,
+  X,
+  Bell,
+  Image as ImgIcon,
+  MessageSquare,
+} from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
@@ -8,8 +19,15 @@ import { useTicketStore } from '@/stores/ticketStore';
 import { useFavoriteStore } from '@/stores/favoriteStore';
 import { useUIStore } from '@/stores/uiStore';
 import { mockTickets, departments } from '@/data/mockData';
-import type { AnomalyTicket } from '@/types';
+import type { AnomalyTicket, TicketComment } from '@/types';
 import { cn } from '@/lib/utils';
+
+const SLA_HOURS: Record<AnomalyTicket['level'], number> = {
+  critical: 4,
+  high: 8,
+  medium: 24,
+  low: 48,
+};
 
 const levelConfig: Record<AnomalyTicket['level'], { bg: string; border: string; text: string; label: string }> = {
   critical: { bg: 'bg-danger/15', border: 'border-danger/30', text: 'text-danger', label: '严重' },
@@ -24,6 +42,35 @@ const statusConf: Record<AnomalyTicket['status'], { text: string; status: 'warni
   completed: { text: '已完成', status: 'success' },
 };
 
+type SlaStatus = 'danger' | 'warning' | 'yellow' | 'success';
+
+const slaStatusConfig: Record<SlaStatus, { bar: string; badgeBg: string; badgeText: string; label: string }> = {
+  danger: {
+    bar: 'bg-danger',
+    badgeBg: 'bg-danger/15 border-danger/30 text-danger',
+    badgeText: '已超时',
+    label: '已超时',
+  },
+  warning: {
+    bar: 'bg-warning',
+    badgeBg: 'bg-warning/15 border-warning/30 text-warning',
+    badgeText: '紧急',
+    label: '1小时内',
+  },
+  yellow: {
+    bar: 'bg-yellow-400',
+    badgeBg: 'bg-yellow-400/15 border-yellow-400/30 text-yellow-400',
+    badgeText: '预警',
+    label: '4小时内',
+  },
+  success: {
+    bar: 'bg-success',
+    badgeBg: 'bg-success/15 border-success/30 text-success',
+    badgeText: '正常',
+    label: '正常',
+  },
+};
+
 function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
     <div className="mb-3 flex items-center gap-2">
@@ -33,19 +80,91 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
   );
 }
 
+function parseDate(s: string): Date {
+  return new Date(s.replace(/-/g, '/'));
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 0) {
+    const abs = Math.abs(ms);
+    const h = Math.floor(abs / 3600000);
+    const m = Math.floor((abs % 3600000) / 60000);
+    return `超时${h}小时${m}分`;
+  }
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (h > 0) return `${h}小时${m}分`;
+  return `${m}分钟`;
+}
+
+function computeSla(t: AnomalyTicket, now: number) {
+  const deadline = parseDate(t.slaDeadline).getTime();
+  const base = parseDate(t.detectedAt || t.createdAt).getTime();
+  const totalMs = SLA_HOURS[t.level] * 3600000;
+  const remaining = deadline - now;
+  const elapsed = now - base;
+  const percent = Math.max(0, Math.min(100, (remaining / totalMs) * 100));
+  let status: SlaStatus = 'success';
+  if (remaining <= 0) status = 'danger';
+  else if (remaining <= 3600000) status = 'warning';
+  else if (remaining <= 4 * 3600000) status = 'yellow';
+  const completedPercent = 100 - percent;
+  return { remaining, percent, completedPercent, status, totalMs, elapsed };
+}
+
+function highlightMentions(content: string, mentions?: string[]) {
+  if (!mentions || mentions.length === 0) return content;
+  let result = content;
+  mentions.forEach((m) => {
+    const re = new RegExp(`(@${m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'g');
+    result = result.replace(re, '@@@MENTION@@@$1@@@END@@@');
+  });
+  const parts = result.split(/@@@MENTION@@@|@@@END@@@/);
+  return parts.map((p, i) => {
+    if (p.startsWith('@')) {
+      return (
+        <span key={i} className="text-brand font-medium">
+          {p}
+        </span>
+      );
+    }
+    return <span key={i}>{p}</span>;
+  });
+}
+
 export default function TicketDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { showToast } = useUIStore();
   const { addOperationLog } = useFavoriteStore();
   const tickets = useTicketStore((s) => s.tickets);
+  const storeComments = useTicketStore((s) => s.comments);
   const claimTicket = useTicketStore((s) => s.claimTicket);
+  const urgeTicket = useTicketStore((s) => s.urgeTicket);
+  const addComment = useTicketStore((s) => s.addComment);
 
   const fallbackTicket = mockTickets.find((x) => x.id === id) ?? mockTickets[0];
   const t = useMemo(() => {
     const found = tickets.find((x) => x.id === id);
     return found ?? fallbackTicket;
   }, [tickets, id, fallbackTicket]);
+
+  const comments = useMemo(() => {
+    const filtered = storeComments.filter((c) => c.ticketId === t.id);
+    return filtered.sort((a, b) => parseDate(b.createdAt).getTime() - parseDate(a.createdAt).getTime());
+  }, [storeComments, t.id]);
+
+  const [now, setNow] = useState(Date.now());
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
+  const [commentContent, setCommentContent] = useState('');
+
+  useMemo(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const sla = computeSla(t, now);
+  const slaConf = slaStatusConfig[sla.status];
 
   const lc = levelConfig[t.level];
   const sc = statusConf[t.status];
@@ -58,6 +177,31 @@ export default function TicketDetail() {
     claimTicket(t.id);
     addOperationLog('认领', '异常工单', t.title, '一键认领并开始处理');
     showToast('工单已认领，状态变为处理中', 'success');
+  };
+
+  const handleUrge = () => {
+    urgeTicket(t.id);
+    addOperationLog('催办', '异常工单', t.title, `第${(t.urgedCount ?? 0) + 1}次催办`);
+    showToast('催办通知已发送', 'info');
+  };
+
+  const handleSendComment = () => {
+    const content = commentContent.trim();
+    if (!content) {
+      showToast('请输入评论内容', 'warning');
+      return;
+    }
+    addComment(t.id, content, [], []);
+    addOperationLog('评论', '异常工单', t.title, content.slice(0, 50));
+    setCommentContent('');
+    showToast('评论已发送', 'success');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      handleSendComment();
+    }
   };
 
   return (
@@ -82,6 +226,12 @@ export default function TicketDetail() {
                   {lc.label}
                 </span>
                 <StatusBadge status={sc.status} text={sc.text} size="sm" showIcon={false} />
+                {t.urgedCount > 0 && (
+                  <span className="relative inline-flex items-center rounded-md bg-danger/15 border border-danger/30 px-2 py-0.5 text-[10px] font-bold text-danger">
+                    <Bell size={10} className="mr-0.5" />
+                    已催办{t.urgedCount}次
+                  </span>
+                )}
               </div>
               <h1 className="mt-1.5 text-base font-bold text-white leading-snug">{t.title}</h1>
               <p className="mt-1.5 text-xs text-white/60 leading-relaxed line-clamp-2">{t.description}</p>
@@ -104,6 +254,54 @@ export default function TicketDetail() {
           <div className="mt-3 flex items-center gap-1.5 text-[10px] text-white/40">
             <Clock size={11} />
             检测时间：{t.detectedAt}
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <SectionTitle icon={<Clock size={14} />} title="SLA 处理时效" />
+          <div className="rounded-xl bg-background-card border border-white/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold border', slaConf.badgeBg)}>
+                  {slaConf.badgeText}
+                </span>
+                <span className="text-[10px] text-white/40">
+                  截止：{t.slaDeadline.slice(5, 16)}
+                </span>
+              </div>
+              <span className={cn(
+                'text-xs font-bold',
+                sla.status === 'danger' ? 'text-danger' :
+                sla.status === 'warning' ? 'text-warning' :
+                sla.status === 'yellow' ? 'text-yellow-400' : 'text-success',
+              )}>
+                {formatDuration(sla.remaining)}
+              </span>
+            </div>
+            <div className="relative h-2 w-full rounded-full bg-white/5 overflow-hidden">
+              <div
+                className={cn('absolute left-0 top-0 h-full rounded-full transition-all duration-500', slaConf.bar)}
+                style={{ width: `${sla.completedPercent}%` }}
+              />
+              <div
+                className="absolute top-0 h-full w-0.5 bg-white/30"
+                style={{ left: `${sla.completedPercent}%` }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[10px] text-white/40">
+              <span>已消耗 {sla.completedPercent.toFixed(0)}%</span>
+              <span>剩余 {sla.percent.toFixed(0)}%</span>
+            </div>
+            {t.status === 'processing' && (
+              <button
+                type="button"
+                onClick={handleUrge}
+                className="w-full min-h-10 mt-1 rounded-lg bg-danger/10 border border-danger/20 text-xs font-medium text-danger hover:bg-danger/15 active:scale-[0.98] transition-all duration-300 flex items-center justify-center gap-1.5"
+              >
+                <Bell size={12} />
+                发起催办
+              </button>
+            )}
           </div>
         </div>
 
@@ -160,32 +358,41 @@ export default function TicketDetail() {
           </div>
         </div>
 
-        {t.status === 'completed' && (
+        {(t.status === 'completed' || t.rootCause || t.evidences.length > 0) && (
           <div className="mt-5">
-            <SectionTitle icon={<FileText size={14} />} title="处理结果" />
+            <SectionTitle icon={<FileText size={14} />} title="处理详情" />
             <div className="rounded-xl bg-background-card border border-white/5 p-4 space-y-3">
-              <div>
-                <div className="text-[11px] font-medium text-white/40 mb-1.5">根因分析</div>
-                <p className="text-xs text-white/70 leading-relaxed">{t.rootCause ?? '待填写'}</p>
-              </div>
-              <div>
-                <div className="text-[11px] font-medium text-white/40 mb-1.5">解决方案</div>
-                <p className="text-xs text-white/70 leading-relaxed">{t.resolution ?? '待填写'}</p>
-              </div>
+              {t.rootCause && (
+                <div>
+                  <div className="text-[11px] font-medium text-white/40 mb-1.5">根因分析</div>
+                  <p className="text-xs text-white/70 leading-relaxed">{t.rootCause}</p>
+                </div>
+              )}
+              {t.resolution && (
+                <div>
+                  <div className="text-[11px] font-medium text-white/40 mb-1.5">解决方案</div>
+                  <p className="text-xs text-white/70 leading-relaxed">{t.resolution}</p>
+                </div>
+              )}
               {t.evidences.length > 0 && (
                 <div>
                   <div className="text-[11px] font-medium text-white/40 mb-2">证据截图</div>
                   <div className="grid grid-cols-3 gap-2">
                     {t.evidences.map((e, i) => (
-                      <div key={i} className="aspect-square rounded-lg bg-white/5 border border-white/5 overflow-hidden">
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setPreviewImg(e)}
+                        className="aspect-square rounded-lg bg-white/5 border border-white/5 overflow-hidden hover:ring-2 hover:ring-brand/50 transition-all duration-200"
+                      >
                         {e.startsWith('http') || e.startsWith('data:') ? (
                           <img src={e} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="h-full w-full bg-gradient-to-br from-brand/20 to-white/5 flex items-center justify-center">
-                            <FileText size={20} className="text-white/30" />
+                            <ImgIcon size={20} className="text-white/30" />
                           </div>
                         )}
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </div>
@@ -193,6 +400,85 @@ export default function TicketDetail() {
             </div>
           </div>
         )}
+
+        <div className="mt-5">
+          <SectionTitle icon={<MessageSquare size={14} />} title={`评论 (${comments.length})`} />
+          <div className="rounded-xl bg-background-card border border-white/5 overflow-hidden">
+            <div className="border-b border-white/5 p-3">
+              <div className="flex gap-2">
+                <textarea
+                  value={commentContent}
+                  onChange={(e) => setCommentContent(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  rows={2}
+                  placeholder="输入评论内容，Ctrl+Enter 发送..."
+                  className="flex-1 rounded-lg bg-[#0a0e20] border border-white/5 p-2.5 text-xs text-white placeholder:text-white/30 outline-none focus:ring-2 focus:ring-brand/50 resize-none leading-relaxed"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendComment}
+                  className="shrink-0 self-end h-9 px-3 rounded-lg bg-brand text-xs font-medium text-white hover:bg-brand/90 active:scale-[0.98] transition-all duration-200 flex items-center gap-1"
+                >
+                  <Send size={12} />
+                  发送
+                </button>
+              </div>
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+              {comments.length === 0 ? (
+                <div className="py-8 text-center text-xs text-white/30">
+                  <MessageSquare size={24} className="mx-auto mb-2 text-white/20" />
+                  暂无评论，快来添加第一条评论吧
+                </div>
+              ) : (
+                <div className="divide-y divide-white/5">
+                  {comments.map((c: TicketComment) => (
+                    <div key={c.id} className="p-3 flex gap-2.5">
+                      <div className="shrink-0 h-8 w-8 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                        {c.author?.avatar ? (
+                          <img src={c.author.avatar} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center text-[10px] text-white/50 font-medium">
+                            {c.author?.name?.slice(0, 1) ?? '?'}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium text-white">{c.author?.name ?? '未知用户'}</span>
+                          <span className="text-[10px] text-white/30">{c.createdAt.slice(5, 16)}</span>
+                        </div>
+                        <div className="text-xs text-white/70 leading-relaxed break-words">
+                          {highlightMentions(c.content, c.mentions)}
+                        </div>
+                        {c.attachments && c.attachments.length > 0 && (
+                          <div className="mt-2 grid grid-cols-3 gap-1.5">
+                            {c.attachments.map((att, ai) => (
+                              <button
+                                key={ai}
+                                type="button"
+                                onClick={() => setPreviewImg(att)}
+                                className="aspect-square rounded-md bg-white/5 border border-white/5 overflow-hidden"
+                              >
+                                {att.startsWith('http') || att.startsWith('data:') ? (
+                                  <img src={att} alt="" className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="h-full w-full flex items-center justify-center">
+                                    <ImgIcon size={14} className="text-white/30" />
+                                  </div>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-white/5 bg-[#0F1326]/95 backdrop-blur-md px-4 py-3">
@@ -222,6 +508,31 @@ export default function TicketDetail() {
           )}
         </div>
       </div>
+
+      {previewImg && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setPreviewImg(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImg(null)}
+            className="absolute top-4 right-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 border border-white/20 text-white hover:bg-white/20 transition-all duration-200 z-10"
+          >
+            <X size={18} />
+          </button>
+          <div
+            className="max-w-full max-h-full flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={previewImg}
+              alt="预览"
+              className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

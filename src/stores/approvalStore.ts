@@ -1,17 +1,21 @@
 import { create } from 'zustand';
-import type { RevisionRequest, ApprovalNode } from '../types';
+import type { RevisionRequest, ApprovalNode, ApprovalComment, User } from '../types';
 import { mockRevisionRequests, mockCurrentUser } from '../data/mockData';
 import { useCatalogStore } from './catalogStore';
+import { useFavoriteStore } from './favoriteStore';
 import { loadPersist, savePersist } from './persist';
 
 interface ApprovalState {
   pendingList: RevisionRequest[];
   approvedList: RevisionRequest[];
+  comments: ApprovalComment[];
   currentApproval: RevisionRequest | null;
   setCurrentApproval: (approval: RevisionRequest | null) => void;
   submitApproval: (requestId: string, approverIndex: number, approved: boolean, opinion: string) => void;
   publishChange: (requestId: string) => void;
+  addComment: (requestId: string, content: string, mentions: string[], attachments: string[]) => void;
   loadLists: () => void;
+  loadComments: () => void;
 }
 
 const splitByStatus = (list: RevisionRequest[]) => {
@@ -27,6 +31,7 @@ const splitByStatus = (list: RevisionRequest[]) => {
 export const useApprovalStore = create<ApprovalState>((set, get) => {
   const initialSource = loadPersist<RevisionRequest[]>('catalog_revision_requests', mockRevisionRequests);
   const initial = splitByStatus(initialSource);
+  const initialComments = loadPersist<ApprovalComment[]>('approval_comments', []);
 
   const syncToCatalog = (allRequests: RevisionRequest[]) => {
     savePersist('catalog_revision_requests', allRequests);
@@ -39,6 +44,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => {
   return {
     pendingList: initial.pending,
     approvedList: initial.approved,
+    comments: initialComments,
     currentApproval: null,
 
     setCurrentApproval: (approval) => set({ currentApproval: approval }),
@@ -94,10 +100,34 @@ export const useApprovalStore = create<ApprovalState>((set, get) => {
       });
     },
 
+    addComment: (requestId, content, mentions, attachments) => {
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const newComment: ApprovalComment = {
+        id: `ac${Date.now()}`,
+        requestId,
+        author: mockCurrentUser,
+        content,
+        mentions,
+        attachments,
+        createdAt: now,
+      };
+      set((state) => {
+        const newComments = [newComment, ...state.comments];
+        savePersist('approval_comments', newComments);
+        return { comments: newComments };
+      });
+      useFavoriteStore.getState().addOperationLog('评论', '审批中心', requestId, content);
+    },
+
     loadLists: () => {
       const catalogRequests = useCatalogStore.getState().revisionRequests;
       const split = splitByStatus(catalogRequests);
       set({ pendingList: split.pending, approvedList: split.approved });
+    },
+
+    loadComments: () => {
+      const stored = loadPersist<ApprovalComment[]>('approval_comments', []);
+      set({ comments: stored });
     },
   };
 });

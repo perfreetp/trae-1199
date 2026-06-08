@@ -88,6 +88,89 @@ function QuestionItem({ q }: { q: CatalogQuestion }) {
   );
 }
 
+function SectionTitleRev({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand/10 text-brand">
+        {icon}
+      </div>
+      <h2 className="text-sm font-semibold text-white">{title}</h2>
+    </div>
+  );
+}
+
+function RevisionRequestsSection({ catalogId }: { catalogId: string }) {
+  const allRevisionRequests = useCatalogStore((s) => s.revisionRequests);
+
+  const requests = useMemo(
+    () => allRevisionRequests.filter((r) => r.catalogId === catalogId),
+    [allRevisionRequests, catalogId]
+  );
+
+  const reqStatusConfig = {
+    pending: { badge: 'bg-brand/15 text-brand border border-brand/20', label: '待审批' },
+    approved: { badge: 'bg-success/15 text-success border border-success/20', label: '已通过' },
+    rejected: { badge: 'bg-danger/15 text-danger border border-danger/20', label: '已拒绝' },
+    published: { badge: 'bg-purple-500/15 text-purple-400 border border-purple-500/20', label: '已发布' },
+  } as const;
+
+  if (requests.length === 0) return null;
+
+  return (
+    <div className="mt-5">
+      <SectionTitleRev icon={<FileEdit size={14} />} title={`审批修订记录 (${requests.length})`} />
+      <div className="space-y-2">
+        {requests.map((r) => {
+          const statusCfg = reqStatusConfig[r.status];
+          const isPublished = r.status === 'published';
+          return (
+            <div
+              key={r.id}
+              className={cn(
+                'rounded-xl border p-3 transition-all',
+                isPublished
+                  ? 'bg-purple-500/[0.03] border-purple-500/20'
+                  : 'bg-background-card border-white/5'
+              )}
+            >
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={cn('inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium', revTypeColor[r.type])}>
+                    {revTypeMap[r.type]}
+                  </span>
+                  <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium', statusCfg.badge)}>
+                    {isPublished && (
+                      <span className="font-bold mr-1">●</span>
+                    )}
+                    {statusCfg.label}
+                  </span>
+                </div>
+              </div>
+              <p className={cn(
+                'text-xs mb-2 leading-relaxed',
+                isPublished ? 'text-white/90 font-semibold' : 'text-white/70'
+              )}>
+                {isPublished ? '已发布生效：' : ''}{r.reason}
+              </p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <img
+                    src={r.applicant.avatar}
+                    alt={r.applicant.name}
+                    className="h-5 w-5 rounded-full bg-white/10"
+                  />
+                  <span className="text-[11px] text-white/60">{r.applicant.name}</span>
+                </div>
+                <span className="text-[10px] text-white/30">{r.createdAt.slice(0, 16)}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function CatalogDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -261,6 +344,8 @@ export default function CatalogDetail() {
             ))}
           </div>
         </div>
+
+        <RevisionRequestsSection catalogId={catalog.id} />
 
         <div className="mt-5">
           <SectionTitle icon={<HelpCircle size={14} />} title={`相关疑问 (${questions.length})`} />
