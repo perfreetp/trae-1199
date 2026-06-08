@@ -1,10 +1,11 @@
 import { useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Plus, X, Clock, FileText, AlertCircle, Lightbulb, Image as ImgIcon, Timer } from 'lucide-react';
+import { Plus, X, Clock, FileText, AlertCircle, Lightbulb, Image as ImgIcon, Timer, UserCircle2 } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { useTicketStore } from '@/stores/ticketStore';
 import { useFavoriteStore } from '@/stores/favoriteStore';
 import { useUIStore } from '@/stores/uiStore';
+import { currentUser } from '@/data/mockData';
 import { cn } from '@/lib/utils';
 
 type RootCauseType = 'data' | 'business' | 'system' | 'other';
@@ -44,6 +45,8 @@ export default function TicketHandle() {
   const setStatusFilter = useTicketStore((s) => s.setStatusFilter);
   const tickets = useTicketStore((s) => s.tickets);
   const currentTicket = tickets.find((t) => t.id === id);
+
+  const isDelegate = currentTicket?.handler && currentTicket.handler.id !== currentUser.id;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -163,6 +166,15 @@ export default function TicketHandle() {
       />
 
       <div className="mx-auto max-w-md px-4 pt-4 space-y-4">
+        {isDelegate && currentTicket?.handler && (
+          <div className="rounded-xl bg-warning/10 border border-warning/20 px-3 py-2 text-[11px] text-warning flex items-center gap-2">
+            <UserCircle2 size={14} className="shrink-0" />
+            <span className="leading-relaxed">
+              当前指派处理人为 <span className="font-semibold">{currentTicket.handler.name}</span>，您的操作将标记为【代处理】
+            </span>
+          </div>
+        )}
+
         <div className="rounded-xl bg-background-card border border-white/5 p-4">
           <FormLabel icon={<AlertCircle size={12} className="text-brand" />} required>
             根因分析

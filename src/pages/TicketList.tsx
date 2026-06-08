@@ -4,15 +4,16 @@ import { Filter, ChevronDown, Megaphone } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
-import { departments, currentUser } from '@/data/mockData';
-import { useTicketStore, type SLAInfoExtended } from '@/stores/ticketStore';
-import type { AnomalyTicket } from '@/types';
+import { departments, currentUser, mockUsers } from '@/data/mockData';
+import { useTicketStore, type SLAInfoExtended, RESPONSIBILITY_LABELS } from '@/stores/ticketStore';
+import type { AnomalyTicket, ReviewResponsibility } from '@/types';
 import { cn } from '@/lib/utils';
 
 type TabKey = 'pending' | 'processing' | 'completed';
 type LevelKey = AnomalyTicket['level'];
 type TimeoutKey = 'all' | 'overdue' | '1h' | '4h' | 'safe' | 'on-time' | 'overdue-completed';
-type HandlerKey = 'all' | 'mine' | 'unclaimed';
+type HandlerKey = 'all' | 'mine' | 'unclaimed' | `u:${string}`;
+type ResponsibilityKey = 'all' | `r:${ReviewResponsibility}`;
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'pending', label: '待处理' },
@@ -37,10 +38,26 @@ const ALL_TIMEOUT_OPTIONS: { key: TimeoutKey; label: string }[] = [
   { key: 'overdue-completed', label: '超时完成' },
 ];
 
-const HANDLER_OPTIONS: { key: HandlerKey; label: string }[] = [
+const PRESET_HANDLER_OPTIONS: { key: HandlerKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'mine', label: '我认领的' },
   { key: 'unclaimed', label: '待认领' },
+];
+
+const USER_HANDLER_OPTIONS: { key: HandlerKey; label: string; user: typeof mockUsers[number] }[] =
+  mockUsers.map((u) => ({
+    key: `u:${u.id}` as HandlerKey,
+    label: u.name,
+    user: u,
+  }));
+
+const RESPONSIBILITY_OPTIONS: { key: ResponsibilityKey; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'r:data', label: RESPONSIBILITY_LABELS.data },
+  { key: 'r:business', label: RESPONSIBILITY_LABELS.business },
+  { key: 'r:tech', label: RESPONSIBILITY_LABELS.tech },
+  { key: 'r:thirdparty', label: RESPONSIBILITY_LABELS.thirdparty },
+  { key: 'r:none', label: RESPONSIBILITY_LABELS.none },
 ];
 
 const levelBar: Record<LevelKey, string> = {
@@ -137,6 +154,29 @@ function matchesTimeout(key: TimeoutKey, t: AnomalyTicket, slaMap: SLAWithComple
   }
 }
 
+function matchesHandler(key: HandlerKey, t: AnomalyTicket): boolean {
+  switch (key) {
+    case 'all':
+      return true;
+    case 'mine':
+      return !!t.handler && t.handler.id === currentUser.id;
+    case 'unclaimed':
+      return t.status === 'pending' && !t.handler;
+    default:
+      if (key.startsWith('u:')) {
+        const userId = key.slice(2);
+        return !!t.handler && t.handler.id === userId;
+      }
+      return true;
+  }
+}
+
+function matchesResponsibility(key: ResponsibilityKey, t: AnomalyTicket): boolean {
+  if (key === 'all') return true;
+  const rKey = key.slice(2) as ReviewResponsibility;
+  return t.reviewResponsibility === rKey;
+}
+
 function StatCard({ count, label, color }: { count: number; label: string; color: string }) {
   return (
     <div className={cn('flex-1 rounded-xl border p-3', color)}>
@@ -203,6 +243,13 @@ function TicketCard({ t, onClick }: { t: AnomalyTicket; onClick: () => void }) {
             </div>
           </div>
         )}
+        {t.status === 'completed' && t.reviewResponsibility && (
+          <div className="mt-3">
+            <span className="inline-flex items-center rounded-md bg-white/5 border border-white/10 px-2 py-0.5 text-[10px] text-white/60">
+              责任：{RESPONSIBILITY_LABELS[t.reviewResponsibility]}
+            </span>
+          </div>
+        )}
         <div className="mt-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             {handlerAvatar && <AvatarGroup avatars={[handlerAvatar]} max={1} size="sm" />}
@@ -240,9 +287,11 @@ export default function TicketList() {
   const [deptId, setDeptId] = useState<string>('d0');
   const [timeoutFilter, setTimeoutFilter] = useState<TimeoutKey>('all');
   const [handlerFilter, setHandlerFilter] = useState<HandlerKey>('all');
+  const [responsibilityFilter, setResponsibilityFilter] = useState<ResponsibilityKey>('all');
   const [showDeptDropdown, setShowDeptDropdown] = useState(false);
   const [showTimeoutDropdown, setShowTimeoutDropdown] = useState(false);
   const [showHandlerDropdown, setShowHandlerDropdown] = useState(false);
+  const [showResponsibilityDropdown, setShowResponsibilityDropdown] = useState(false);
 
   useEffect(() => {
     if (storeStatusFilter !== 'all' && storeStatusFilter !== tab && validTabs.includes(storeStatusFilter as TabKey)) {
@@ -291,14 +340,11 @@ export default function TicketList() {
       const sla = slaCache.get(t.id);
       if (!sla) return false;
       if (!matchesTimeout(timeoutFilter, t, sla)) return false;
-      if (handlerFilter === 'mine') {
-        if (!t.handler || t.handler.id !== currentUser.id) return false;
-      } else if (handlerFilter === 'unclaimed') {
-        if (t.status !== 'pending' || t.handler) return false;
-      }
+      if (!matchesHandler(handlerFilter, t)) return false;
+      if (tab === 'completed' && !matchesResponsibility(responsibilityFilter, t)) return false;
       return true;
     });
-  }, [tickets, tab, selectedLevels, deptId, timeoutFilter, handlerFilter, slaCache]);
+  }, [tickets, tab, selectedLevels, deptId, timeoutFilter, handlerFilter, responsibilityFilter, slaCache]);
 
   const toggleLevel = (lv: LevelKey) => {
     setSelectedLevels((prev) =>
@@ -308,10 +354,26 @@ export default function TicketList() {
 
   const deptName = departments.find((d) => d.id === deptId)?.name ?? '全部';
   const timeoutLabel = TIMEOUT_OPTIONS.find((o) => o.key === timeoutFilter)?.label ?? '全部';
-  const handlerLabel = HANDLER_OPTIONS.find((o) => o.key === handlerFilter)?.label ?? '全部';
+
+  const getHandlerLabel = (key: HandlerKey): string => {
+    const preset = PRESET_HANDLER_OPTIONS.find((o) => o.key === key);
+    if (preset) return preset.label;
+    const userOpt = USER_HANDLER_OPTIONS.find((o) => o.key === key);
+    return userOpt?.user?.name ?? '全部';
+  };
+  const handlerLabel = getHandlerLabel(handlerFilter);
+
+  const responsibilityLabel = RESPONSIBILITY_OPTIONS.find((o) => o.key === responsibilityFilter)?.label ?? '全部';
+
+  const closeAllDropdowns = () => {
+    setShowDeptDropdown(false);
+    setShowTimeoutDropdown(false);
+    setShowHandlerDropdown(false);
+    setShowResponsibilityDropdown(false);
+  };
 
   return (
-    <div className="min-h-screen bg-[#0F1326]">
+    <div className="min-h-screen bg-[#0F1326]" onClick={closeAllDropdowns}>
       <TopBar
         title="异常工单"
         showBack
@@ -333,7 +395,7 @@ export default function TicketList() {
             <button
               key={t.key}
               type="button"
-              onClick={() => updateTab(t.key)}
+              onClick={(e) => { e.stopPropagation(); updateTab(t.key); }}
               className={cn(
                 'flex-1 min-h-10 rounded-lg text-xs font-medium transition-all duration-300 relative',
                 tab === t.key ? 'bg-brand text-white shadow-lg shadow-brand/20' : 'text-white/60 hover:text-white/80',
@@ -350,7 +412,7 @@ export default function TicketList() {
           ))}
         </div>
 
-        <div className="mt-4 rounded-2xl bg-background-card border border-white/5 p-3 space-y-3">
+        <div className="mt-4 rounded-2xl bg-background-card border border-white/5 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-2">
             <Filter size={14} strokeWidth={2} className="text-white/40 shrink-0" />
             <span className="text-[11px] font-medium text-white/60">筛选条件</span>
@@ -385,10 +447,12 @@ export default function TicketList() {
               <div className="text-[10px] text-white/30 mb-1.5">部门</div>
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowDeptDropdown(!showDeptDropdown);
                   setShowTimeoutDropdown(false);
                   setShowHandlerDropdown(false);
+                  setShowResponsibilityDropdown(false);
                 }}
                 className="w-full flex items-center justify-between gap-1 rounded-lg bg-white/[0.03] border border-white/10 px-2 py-1.5 text-[11px] text-white/70 hover:border-white/20 transition-all"
               >
@@ -397,11 +461,11 @@ export default function TicketList() {
               </button>
               {showDeptDropdown && (
                 <div className="absolute z-30 mt-1 w-full rounded-xl bg-background-card border border-white/10 shadow-2xl shadow-black/40 overflow-hidden">
-                  {departments.filter((d) => d.id !== 'd0' || d.id === 'd0').map((d) => (
+                  {departments.map((d) => (
                     <button
                       key={d.id}
                       type="button"
-                      onClick={() => { setDeptId(d.id); setShowDeptDropdown(false); }}
+                      onClick={(e) => { e.stopPropagation(); setDeptId(d.id); setShowDeptDropdown(false); }}
                       className={cn(
                         'w-full px-3 py-2 text-left text-[11px] transition-all',
                         deptId === d.id ? 'bg-brand/15 text-brand' : 'text-white/70 hover:bg-white/5'
@@ -418,10 +482,12 @@ export default function TicketList() {
               <div className="text-[10px] text-white/30 mb-1.5">超时</div>
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowTimeoutDropdown(!showTimeoutDropdown);
                   setShowDeptDropdown(false);
                   setShowHandlerDropdown(false);
+                  setShowResponsibilityDropdown(false);
                 }}
                 className="w-full flex items-center justify-between gap-1 rounded-lg bg-white/[0.03] border border-white/10 px-2 py-1.5 text-[11px] text-white/70 hover:border-white/20 transition-all"
               >
@@ -434,7 +500,7 @@ export default function TicketList() {
                     <button
                       key={o.key}
                       type="button"
-                      onClick={() => { setTimeoutFilter(o.key); setShowTimeoutDropdown(false); }}
+                      onClick={(e) => { e.stopPropagation(); setTimeoutFilter(o.key); setShowTimeoutDropdown(false); }}
                       className={cn(
                         'w-full px-3 py-2 text-left text-[11px] transition-all',
                         timeoutFilter === o.key ? 'bg-brand/15 text-brand' : 'text-white/70 hover:bg-white/5'
@@ -451,10 +517,12 @@ export default function TicketList() {
               <div className="text-[10px] text-white/30 mb-1.5">处理人</div>
               <button
                 type="button"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   setShowHandlerDropdown(!showHandlerDropdown);
                   setShowDeptDropdown(false);
                   setShowTimeoutDropdown(false);
+                  setShowResponsibilityDropdown(false);
                 }}
                 className="w-full flex items-center justify-between gap-1 rounded-lg bg-white/[0.03] border border-white/10 px-2 py-1.5 text-[11px] text-white/70 hover:border-white/20 transition-all"
               >
@@ -463,11 +531,11 @@ export default function TicketList() {
               </button>
               {showHandlerDropdown && (
                 <div className="absolute z-30 mt-1 w-full rounded-xl bg-background-card border border-white/10 shadow-2xl shadow-black/40 overflow-hidden">
-                  {HANDLER_OPTIONS.map((o) => (
+                  {PRESET_HANDLER_OPTIONS.map((o) => (
                     <button
                       key={o.key}
                       type="button"
-                      onClick={() => { setHandlerFilter(o.key); setShowHandlerDropdown(false); }}
+                      onClick={(e) => { e.stopPropagation(); setHandlerFilter(o.key); setShowHandlerDropdown(false); }}
                       className={cn(
                         'w-full px-3 py-2 text-left text-[11px] transition-all',
                         handlerFilter === o.key ? 'bg-brand/15 text-brand' : 'text-white/70 hover:bg-white/5'
@@ -476,13 +544,81 @@ export default function TicketList() {
                       {o.label}
                     </button>
                   ))}
+                  <div className="h-px bg-white/5 mx-2" />
+                  {USER_HANDLER_OPTIONS.map((o) => (
+                    <button
+                      key={o.key}
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); setHandlerFilter(o.key); setShowHandlerDropdown(false); }}
+                      className={cn(
+                        'w-full px-3 py-2 text-left transition-all',
+                        handlerFilter === o.key ? 'bg-brand/15 text-brand' : 'text-white/70 hover:bg-white/5'
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className="shrink-0 h-5 w-5 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                          {o.user.avatar ? (
+                            <img src={o.user.avatar} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center text-[9px] text-white/50 font-medium">
+                              {o.user.name?.slice(0, 1) ?? '?'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[11px] font-medium">{o.user.name}</div>
+                          <div className="text-[9px] text-white/40">{o.user.department}</div>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
           </div>
+
+          {tab === 'completed' && (
+            <div className="grid grid-cols-2 gap-2">
+              <div />
+              <div className="relative">
+                <div className="text-[10px] text-white/30 mb-1.5">责任分类</div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowResponsibilityDropdown(!showResponsibilityDropdown);
+                    setShowDeptDropdown(false);
+                    setShowTimeoutDropdown(false);
+                    setShowHandlerDropdown(false);
+                  }}
+                  className="w-full flex items-center justify-between gap-1 rounded-lg bg-white/[0.03] border border-white/10 px-2 py-1.5 text-[11px] text-white/70 hover:border-white/20 transition-all"
+                >
+                  <span className="truncate">{responsibilityLabel}</span>
+                  <ChevronDown size={12} strokeWidth={2} className={cn('text-white/40 transition-transform', showResponsibilityDropdown && 'rotate-180')} />
+                </button>
+                {showResponsibilityDropdown && (
+                  <div className="absolute z-30 mt-1 w-full rounded-xl bg-background-card border border-white/10 shadow-2xl shadow-black/40 overflow-hidden">
+                    {RESPONSIBILITY_OPTIONS.map((o) => (
+                      <button
+                        key={o.key}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setResponsibilityFilter(o.key); setShowResponsibilityDropdown(false); }}
+                        className={cn(
+                          'w-full px-3 py-2 text-left text-[11px] transition-all',
+                          responsibilityFilter === o.key ? 'bg-brand/15 text-brand' : 'text-white/70 hover:bg-white/5'
+                        )}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-3" onClick={(e) => e.stopPropagation()}>
           {list.map((t) => (
             <TicketCard key={t.id} t={t} onClick={() => navigate(`/tickets/${t.id}`)} />
           ))}

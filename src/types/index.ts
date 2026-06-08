@@ -129,6 +129,8 @@ export interface TicketTimeline {
   timestamp: string;
 }
 
+export type ReviewResponsibility = 'data' | 'business' | 'tech' | 'thirdparty' | 'none';
+
 export interface AnomalyTicket {
   id: string;
   title: string;
@@ -151,6 +153,10 @@ export interface AnomalyTicket {
   detectedAt: string;
   slaDeadline: string;
   urgedCount: number;
+  reviewConclusion?: string;
+  reviewResponsibility?: ReviewResponsibility;
+  reviewBy?: User;
+  reviewTime?: string;
 }
 
 export interface TicketComment {

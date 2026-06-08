@@ -14,15 +14,16 @@ import {
   AlertCircle,
   CheckCircle,
   UserCircle2,
+  Pencil,
 } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
-import { useTicketStore } from '@/stores/ticketStore';
+import { useTicketStore, RESPONSIBILITY_LABELS } from '@/stores/ticketStore';
 import { useFavoriteStore } from '@/stores/favoriteStore';
 import { useUIStore } from '@/stores/uiStore';
-import { mockTickets, departments, mockUsers } from '@/data/mockData';
-import type { AnomalyTicket, TicketComment, User } from '@/types';
+import { mockTickets, departments, mockUsers, currentUser } from '@/data/mockData';
+import type { AnomalyTicket, TicketComment, User, ReviewResponsibility } from '@/types';
 import { cn } from '@/lib/utils';
 
 const levelConfig: Record<AnomalyTicket['level'], { bg: string; border: string; text: string; label: string }> = {
@@ -66,6 +67,14 @@ const slaStatusConfig: Record<SlaStatus, { bar: string; badgeBg: string; badgeTe
     label: '正常',
   },
 };
+
+const RESPONSIBILITY_OPTIONS: { key: ReviewResponsibility; label: string }[] = [
+  { key: 'data', label: '数据团队' },
+  { key: 'business', label: '业务团队' },
+  { key: 'tech', label: '技术团队' },
+  { key: 'thirdparty', label: '第三方问题' },
+  { key: 'none', label: '无责任' },
+];
 
 function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
@@ -130,6 +139,7 @@ export default function TicketDetail() {
   const setStatusFilter = useTicketStore((s) => s.setStatusFilter);
   const reassignTicket = useTicketStore((s) => s.reassignTicket);
   const getSLAInfo = useTicketStore((s) => s.getSLAInfo);
+  const saveReview = useTicketStore((s) => s.saveReview);
 
   const fallbackTicket = mockTickets.find((x) => x.id === id) ?? mockTickets[0];
   const t = useMemo(() => {
@@ -146,6 +156,16 @@ export default function TicketDetail() {
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [commentContent, setCommentContent] = useState('');
   const [showReassignModal, setShowReassignModal] = useState(false);
+
+  const isDelegate = t.handler && t.handler.id !== currentUser.id;
+  const urgeTarget = t.handler ?? t.assignee;
+
+  const initialEditing = t.status === 'completed' && !t.reviewConclusion;
+  const [reviewEditing, setReviewEditing] = useState<boolean>(initialEditing);
+  const [reviewResponsibility, setReviewResponsibility] = useState<ReviewResponsibility>(
+    t.reviewResponsibility ?? 'none'
+  );
+  const [reviewConclusion, setReviewConclusion] = useState<string>(t.reviewConclusion ?? '');
 
   useMemo(() => {
     const timer = setInterval(() => setNow(Date.now()), 60000);
@@ -207,6 +227,36 @@ export default function TicketDetail() {
     setShowReassignModal(false);
   };
 
+  const handleSaveReview = () => {
+    const conclusion = reviewConclusion.trim();
+    if (!conclusion) {
+      showToast('请填写复盘结论', 'warning');
+      return;
+    }
+    saveReview(t.id, conclusion, reviewResponsibility);
+    const label = RESPONSIBILITY_LABELS[reviewResponsibility];
+    addOperationLog(
+      '复盘',
+      '异常工单',
+      t.title,
+      `结论：${conclusion.slice(0, 40)} | 责任：${label}`
+    );
+    showToast('复盘信息已保存', 'success');
+    setReviewEditing(false);
+  };
+
+  const handleCancelReview = () => {
+    setReviewResponsibility(t.reviewResponsibility ?? 'none');
+    setReviewConclusion(t.reviewConclusion ?? '');
+    setReviewEditing(false);
+  };
+
+  const handleStartEditReview = () => {
+    setReviewResponsibility(t.reviewResponsibility ?? 'none');
+    setReviewConclusion(t.reviewConclusion ?? '');
+    setReviewEditing(true);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -247,6 +297,35 @@ export default function TicketDetail() {
               <p className="mt-1.5 text-xs text-white/60 leading-relaxed line-clamp-2">{t.description}</p>
             </div>
           </div>
+
+          {t.handler && (
+            <div className="mt-4 rounded-lg bg-black/20 border border-white/5 p-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="shrink-0 h-6 w-6 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                  {t.handler.avatar ? (
+                    <img src={t.handler.avatar} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center text-[10px] text-white/50 font-medium">
+                      {t.handler.name?.slice(0, 1) ?? '?'}
+                    </div>
+                  )}
+                </div>
+                <span className="text-[11px] text-white/60">处理人：</span>
+                <span className="text-[11px] font-medium text-white">{t.handler.name}</span>
+                {isDelegate && (
+                  <span className="inline-flex items-center rounded-md bg-warning/10 border border-warning/30 px-2 py-0.5 text-[10px] font-semibold text-warning">
+                    代处理中
+                  </span>
+                )}
+              </div>
+              {isDelegate && (
+                <div className="mt-1.5 text-[10px] text-warning/80 leading-relaxed">
+                  当前操作会标记为代处理，实际记录人员为 {currentUser.name}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="mt-4 grid grid-cols-3 gap-2">
             <div className="rounded-lg bg-black/20 p-2.5 border border-white/5">
               <div className="text-[9px] text-white/40">当前值</div>
@@ -305,9 +384,30 @@ export default function TicketDetail() {
                   <span>剩余 {slaInfo.percent.toFixed(0)}%</span>
                 </div>
                 {slaInfo.urgedCount > 0 && (
-                  <div className="flex items-center gap-1.5 text-[11px] text-danger">
-                    <Bell size={12} />
-                    <span>已被催办 <span className="font-bold">{slaInfo.urgedCount}</span> 次</span>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] text-danger">
+                      <Bell size={12} />
+                      <span>已被催办 <span className="font-bold">{slaInfo.urgedCount}</span> 次</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-white/40">催办对象：</span>
+                      {urgeTarget ? (
+                        <div className="flex items-center gap-1.5">
+                          <div className="shrink-0 h-5 w-5 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                            {urgeTarget.avatar ? (
+                              <img src={urgeTarget.avatar} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center text-[9px] text-white/50 font-medium">
+                                {urgeTarget.name?.slice(0, 1) ?? '?'}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-white/70">{urgeTarget.name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-white/30">待认领</span>
+                      )}
+                    </div>
                   </div>
                 )}
                 {t.status === 'processing' && (
@@ -457,6 +557,108 @@ export default function TicketDetail() {
                         )}
                       </button>
                     ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {t.status === 'completed' && (
+          <div className="mt-5">
+            <SectionTitle icon={<CheckCircle size={14} />} title="复盘信息" />
+            <div className="rounded-xl bg-background-card border border-white/5 p-4">
+              {!reviewEditing && t.reviewConclusion ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center rounded-md bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/70 border border-white/10">
+                        责任分类
+                      </span>
+                      <span className="inline-flex items-center rounded-md bg-brand/10 px-2.5 py-1 text-[11px] text-brand border border-brand/20">
+                        {RESPONSIBILITY_LABELS[t.reviewResponsibility ?? 'none']}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleStartEditReview}
+                      className="inline-flex items-center gap-1 rounded-lg bg-white/5 border border-white/10 px-2.5 py-1 text-[11px] font-medium text-white/70 hover:bg-white/10 hover:text-white transition-all"
+                    >
+                      <Pencil size={12} />
+                      编辑
+                    </button>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-medium text-white/40 mb-1.5">复盘结论</div>
+                    <p className="text-xs text-white/70 leading-relaxed whitespace-pre-wrap">{t.reviewConclusion}</p>
+                  </div>
+                  {t.reviewBy && t.reviewTime && (
+                    <div className="flex items-center gap-2 pt-2 border-t border-white/5">
+                      <div className="shrink-0 h-5 w-5 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                        {t.reviewBy.avatar ? (
+                          <img src={t.reviewBy.avatar} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center text-[9px] text-white/50 font-medium">
+                            {t.reviewBy.name?.slice(0, 1) ?? '?'}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-white/40">
+                        by {t.reviewBy.name} · {t.reviewTime.slice(5, 16)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-[11px] font-medium text-white/40 mb-2">责任分类</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {RESPONSIBILITY_OPTIONS.map((opt) => {
+                        const active = reviewResponsibility === opt.key;
+                        return (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setReviewResponsibility(opt.key)}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] font-medium transition-all duration-200',
+                              active
+                                ? 'bg-brand/10 text-brand border-brand/20'
+                                : 'bg-white/[0.03] text-white/40 border-white/10 hover:text-white/60 hover:border-white/20'
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-medium text-white/40 mb-1.5">复盘结论</div>
+                    <textarea
+                      value={reviewConclusion}
+                      onChange={(e) => setReviewConclusion(e.target.value)}
+                      rows={4}
+                      placeholder="请填写复盘结论，经验或改进建议..."
+                      className="w-full rounded-xl bg-[#0a0e20] border border-white/5 p-3 text-xs text-white placeholder:text-white/30 outline-none focus:ring-2 focus:ring-brand/50 resize-none leading-relaxed"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCancelReview}
+                      className="flex-1 min-h-9 rounded-lg bg-white/5 border border-white/10 text-xs font-medium text-white/70 hover:bg-white/10 hover:text-white active:scale-[0.98] transition-all duration-300"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveReview}
+                      className="flex-1 min-h-9 rounded-lg bg-gradient-to-r from-brand to-brand/80 text-xs font-semibold text-white shadow-lg shadow-brand/20 hover:brightness-110 active:scale-[0.98] transition-all duration-300"
+                    >
+                      保存
+                    </button>
                   </div>
                 </div>
               )}

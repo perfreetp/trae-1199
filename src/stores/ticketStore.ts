@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AnomalyTicket, TicketTimeline, TicketComment, User } from '../types';
+import type { AnomalyTicket, TicketTimeline, TicketComment, User, ReviewResponsibility } from '../types';
 import { mockTickets, mockCurrentUser, mockUsers } from '../data/mockData';
 import { loadPersist, savePersist } from './persist';
 
@@ -15,7 +15,8 @@ const SLA_HOURS: Record<AnomalyTicket['level'], number> = {
 
 function addSLADefaults(list: AnomalyTicket[]): AnomalyTicket[] {
   return list.map((t) => {
-    if (t.slaDeadline && typeof t.urgedCount === 'number') return t;
+    const hasAll = t.slaDeadline && typeof t.urgedCount === 'number';
+    if (hasAll) return t;
     const base = t.detectedAt || t.createdAt;
     const dt = new Date(base.replace(/-/g, '/'));
     dt.setHours(dt.getHours() + SLA_HOURS[t.level]);
@@ -24,6 +25,14 @@ function addSLADefaults(list: AnomalyTicket[]): AnomalyTicket[] {
     return { ...t, slaDeadline: deadline, urgedCount: t.urgedCount ?? 0 };
   });
 }
+
+export const RESPONSIBILITY_LABELS: Record<ReviewResponsibility, string> = {
+  data: '数据团队',
+  business: '业务团队',
+  tech: '技术团队',
+  thirdparty: '第三方问题',
+  none: '无责任（正常波动）',
+};
 
 export interface TicketCompletedInfo {
   overdueCompleted: boolean;
@@ -54,6 +63,7 @@ interface TicketState {
   completeTicket: (ticketId: string, resolution: string) => void;
   reassignTicket: (ticketId: string, newHandler: User) => void;
   urgeTicket: (ticketId: string) => void;
+  saveReview: (ticketId: string, conclusion: string, responsibility: ReviewResponsibility) => void;
   addComment: (ticketId: string, content: string, mentions?: string[], attachments?: string[]) => void;
   addTimeline: (ticketId: string, action: string, remark?: string) => void;
   getSLAInfo: (ticketId: string, now?: number) => SLAInfoExtended;
@@ -115,10 +125,16 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   processTicket: (ticketId, rootCause, resolution, evidences = []) => {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const ticket = get().tickets.find((t) => t.id === ticketId);
+    const handlerName = ticket?.handler?.name;
+    const isDelegate = handlerName && ticket?.handler?.id !== mockCurrentUser.id;
+    const remark = isDelegate
+      ? `[代处理（实际处理人：${mockCurrentUser.name} / 指派处理人：${handlerName}）] ${rootCause}`
+      : rootCause;
     const timeline: TicketTimeline = {
-      action: '处理中',
+      action: isDelegate ? '代处理' : '处理中',
       operator: mockCurrentUser,
-      remark: rootCause,
+      remark,
       timestamp: now,
     };
     set((state) => {
@@ -140,10 +156,16 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   completeTicket: (ticketId, resolution) => {
     const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const ticket = get().tickets.find((t) => t.id === ticketId);
+    const handlerName = ticket?.handler?.name;
+    const isDelegate = handlerName && ticket?.handler?.id !== mockCurrentUser.id;
+    const remark = isDelegate
+      ? `[代完成（操作人：${mockCurrentUser.name} / 指派处理人：${handlerName}）] ${resolution}`
+      : resolution;
     const timeline: TicketTimeline = {
-      action: '处理完成',
+      action: isDelegate ? '代处理完成' : '处理完成',
       operator: mockCurrentUser,
-      remark: resolution,
+      remark,
       timestamp: now,
     };
     set((state) => {
@@ -179,16 +201,63 @@ export const useTicketStore = create<TicketState>((set, get) => ({
 
   urgeTicket: (ticketId) => {
     const now = nowStr();
+    const ticket = get().tickets.find((x) => x.id === ticketId);
+    const urgeTarget = ticket?.handler ?? ticket?.assignee;
+    const urgeTargetName = urgeTarget?.name ?? '当前处理人';
+    const urgeCount = (ticket?.urgedCount ?? 0) + 1;
     const timeline: TicketTimeline = {
       action: '催办工单',
       operator: mockCurrentUser,
-      remark: `第${(get().tickets.find((x) => x.id === ticketId)?.urgedCount ?? 0) + 1}次催办，请尽快处理`,
+      remark: `第${urgeCount}次催办（催办对象：${urgeTargetName}），请尽快处理`,
       timestamp: now,
     };
     set((state) => {
       const newTickets = state.tickets.map((t) =>
         t.id === ticketId
           ? { ...t, urgedCount: (t.urgedCount ?? 0) + 1, timestamps: [...t.timestamps, timeline] }
+          : t
+      );
+      savePersist('tickets', newTickets);
+      if (urgeTarget && urgeTarget.id !== mockCurrentUser.id) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { useSubscriptionStore } = require('./subscriptionStore');
+          useSubscriptionStore.getState().addNotification({
+            id: `urge_${ticketId}_${Date.now()}`,
+            type: 'anomaly',
+            title: `工单被催办`,
+            content: `${mockCurrentUser.name} 催办工单「${ticket?.title ?? ''}」（第${urgeCount}次）`,
+            relatedId: ticketId,
+            relatedType: 'ticket',
+            relatedPath: `/tickets/${ticketId}`,
+            isRead: false,
+            createdAt: now,
+          });
+        } catch (_e) { /* ignore */ }
+      }
+      return { tickets: newTickets };
+    });
+  },
+
+  saveReview: (ticketId, conclusion, responsibility) => {
+    const now = nowStr();
+    const timeline: TicketTimeline = {
+      action: '补充复盘',
+      operator: mockCurrentUser,
+      remark: `责任分类：${RESPONSIBILITY_LABELS[responsibility]}｜复盘结论：${conclusion}`,
+      timestamp: now,
+    };
+    set((state) => {
+      const newTickets = state.tickets.map((t) =>
+        t.id === ticketId
+          ? {
+              ...t,
+              reviewConclusion: conclusion,
+              reviewResponsibility: responsibility,
+              reviewBy: mockCurrentUser,
+              reviewTime: now,
+              timestamps: [...t.timestamps, timeline],
+            }
           : t
       );
       savePersist('tickets', newTickets);
