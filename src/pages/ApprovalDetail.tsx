@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { TopBar } from '@/components/TopBar';
 import { BottomNav } from '@/components/BottomNav';
 import { useApprovalStore } from '@/stores/approvalStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import { X, Check, Clock, User } from 'lucide-react';
 import type { RevisionRequest, ApprovalNode } from '@/types';
@@ -22,48 +25,75 @@ const nodeStatusConfig: Record<NodeStatus, { dot: string; line: string; label: s
   skipped: { dot: 'bg-white/20 border-white/20', line: 'bg-white/10', label: '已跳过', labelClass: 'text-white/40' },
 };
 
-const mockRequest: RevisionRequest = {
-  id: 'rr1',
-  catalogId: 'c1',
-  type: 'update',
-  reason: '公司新增跨境电商业务线，需要纳入销售额统计范围。目前月度销售额仅统计国内电商、线下门店和分销渠道，跨境业务独立核算，导致整体GMV数据与财务口径不一致。建议统一纳入统计，方便管理决策。',
-  suggestedContent: '在数据源中增加"跨境订单表"，增加跨境作为渠道维度',
-  applicant: { id: 'u3', name: '王芳', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=wang', role: 'analyst', department: '市场部' },
-  status: 'pending',
-  approvals: [
-    { id: 'a1', order: 1, approver: { id: 'u1', name: '张明', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=zhang', role: 'manager', department: '销售部' }, status: 'approved', opinion: '同意，补充跨境业务口径文档，确保数据可追溯。', operatedAt: '2026-06-07 09:30:00' },
-    { id: 'a2', order: 2, approver: { id: 'u2', name: '李华', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=li', role: 'admin', department: '数据中心' }, status: 'pending' },
-  ] as ApprovalNode[],
-  createdAt: '2026-06-06 16:00:00',
-};
-
-const oldContent = `数据源：订单中心ODS层 → 销售明细DWS层 → 月度汇总ADS层
+const defaultOldContent = `数据源：订单中心ODS层 → 销售明细DWS层 → 月度汇总ADS层
 统计范围：线上电商平台、线下门店、分销渠道
 维度：时间、地区、渠道（电商/门店/分销）、产品线、客户类型`;
 
-const newContent = `数据源：订单中心ODS层 + 跨境订单表 → 销售明细DWS层（含跨境） → 月度汇总ADS层
+const defaultNewContent = `数据源：订单中心ODS层 + 跨境订单表 → 销售明细DWS层（含跨境） → 月度汇总ADS层
 统计范围：线上电商平台、线下门店、分销渠道、跨境电商
 维度：时间、地区、渠道（电商/门店/分销/跨境）、产品线、客户类型`;
 
 export default function ApprovalDetail() {
+  const navigate = useNavigate();
+  const { id } = useParams<{ id: string }>();
   const [opinion, setOpinion] = useState('');
-  const req = mockRequest;
-  const { submitApproval, publishChange } = useApprovalStore();
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
+  const { pendingList, approvedList, submitApproval, publishChange, loadLists } = useApprovalStore();
+
+  useEffect(() => {
+    loadLists();
+  }, [loadLists]);
+
+  const allRequests = useMemo(() => [...pendingList, ...approvedList], [pendingList, approvedList]);
+  const req: RevisionRequest | undefined = useMemo(() => allRequests.find((r) => r.id === id), [allRequests, id]);
+
+  if (!req) {
+    return (
+      <div className="min-h-screen bg-background pb-24">
+        <TopBar title="审批详情" showBack actions={[]} />
+        <div className="mx-auto max-w-md px-4 py-16 text-center">
+          <p className="text-white/50">申请不存在或已被删除</p>
+          <button
+            onClick={() => navigate('/approvals')}
+            className="mt-4 rounded-xl bg-brand px-6 py-2.5 text-sm font-medium text-white"
+          >
+            返回列表
+          </button>
+        </div>
+        <BottomNav activeTab="approval" />
+      </div>
+    );
+  }
+
   const cfg = typeConfig[req.type];
   const currentNodeIdx = req.approvals.findIndex((a) => a.status === 'pending');
   const isMyTurn = currentNodeIdx >= 0;
   const allApproved = req.approvals.every((a) => a.status === 'approved');
 
+  const oldContent = defaultOldContent;
+  const newContent = defaultNewContent;
+
   const handleApprove = () => {
-    if (currentNodeIdx >= 0) {
-      submitApproval(req.id, currentNodeIdx, true, opinion);
-    }
+    if (currentNodeIdx < 0) return;
+    submitApproval(req.id, currentNodeIdx, true, opinion || '同意');
+    addOperationLog('通过', '审批中心', req.suggestedContent, opinion || '审批通过');
+    setOpinion('');
+    showToast('审批已通过', 'success');
   };
 
   const handleReject = () => {
-    if (currentNodeIdx >= 0) {
-      submitApproval(req.id, currentNodeIdx, false, opinion);
-    }
+    if (currentNodeIdx < 0) return;
+    submitApproval(req.id, currentNodeIdx, false, opinion || '不同意');
+    addOperationLog('拒绝', '审批中心', req.suggestedContent, opinion || '审批拒绝');
+    setOpinion('');
+    showToast('审批已拒绝', 'warning');
+  };
+
+  const handlePublish = () => {
+    publishChange(req.id);
+    addOperationLog('发布', '审批中心', req.suggestedContent, '变更已发布');
+    showToast('变更已发布生效', 'success');
   };
 
   return (
@@ -78,7 +108,7 @@ export default function ApprovalDetail() {
                 {cfg.label}
               </span>
               <h2 className="mt-2 text-base font-semibold text-white">{req.suggestedContent}</h2>
-              <p className="mt-1 text-xs text-white/40">申请单号：{req.id.toUpperCase()}-202606</p>
+              <p className="mt-1 text-xs text-white/40">申请单号：{req.id.toUpperCase()}-{req.createdAt.slice(2, 10).replace(/-/g, '')}</p>
             </div>
           </div>
           <div className="mt-4 flex items-center gap-3 rounded-xl bg-white/5 p-3">
@@ -187,7 +217,7 @@ export default function ApprovalDetail() {
               </button>
             )}
             <button
-              onClick={isMyTurn ? handleApprove : () => publishChange(req.id)}
+              onClick={isMyTurn ? handleApprove : handlePublish}
               className="flex-1 rounded-xl bg-success py-3.5 text-sm font-semibold text-background shadow-lg shadow-success/20 transition-all hover:bg-success/90 active:scale-[0.98]"
             >
               {allApproved ? '通过并发布' : '通过'}

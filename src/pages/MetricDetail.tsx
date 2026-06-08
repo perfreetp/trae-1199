@@ -4,11 +4,11 @@ import { Star, Share2, Bell, BookOpen, TrendingUp, TrendingDown, Minus, ChevronR
 import { TopBar, type TopBarAction } from '@/components/TopBar';
 import { ActionSheet, type ActionSheetItem } from '@/components/ActionSheet';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
-import { TimeRangePicker, type TimeRange } from '@/components/TimeRangePicker';
+import { TimeRangePicker } from '@/components/TimeRangePicker';
 import { TrendChart, type TrendDataPoint } from '@/components/TrendChart';
 import { useMetricStore } from '@/stores/metricStore';
 import { useCatalogStore } from '@/stores/catalogStore';
-import type { Metric, DrillDownItem, TrendPoint, User } from '@/types';
+import type { Metric, DrillDownItem, TrendPoint, User, TimeRange } from '@/types';
 import { cn } from '@/lib/utils';
 
 const useCountUp = (target: number, duration = 1200) => {

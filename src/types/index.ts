@@ -180,11 +180,7 @@ export interface OperationLog {
   createdAt: string;
 }
 
-export interface TimeRange {
-  type: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
-  startDate: string;
-  endDate: string;
-}
+export type TimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 

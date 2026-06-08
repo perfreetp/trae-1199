@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TopBar } from '@/components/TopBar';
 import { BottomNav } from '@/components/BottomNav';
 import { StatusBadge } from '@/components/StatusBadge';
 import Empty from '@/components/Empty';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import {
   Plus,
@@ -37,8 +40,10 @@ const channelIcons = {
 };
 
 export default function SubscriptionList() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TabKey>('subscriptions');
-  const [editingSub, setEditingSub] = useState<string | null>(null);
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
   const { subscriptions, notifications, unreadCount, toggleSubscription, removeSubscription, markAsRead, markAllAsRead } =
     useSubscriptionStore();
 
@@ -52,6 +57,34 @@ export default function SubscriptionList() {
     }
     const dir = t.type === 'above' ? '高于' : '低于';
     return `${sub.metricName}${dir}${t.value}触发（${levelText}）`;
+  };
+
+  const handleToggle = (subId: string, currentEnabled: boolean) => {
+    toggleSubscription(subId);
+    const sub = subscriptions.find((s) => s.id === subId);
+    if (sub) {
+      addOperationLog(currentEnabled ? '停用' : '启用', '订阅规则', sub.metricName, '切换订阅启用状态');
+      showToast(currentEnabled ? '订阅已停用' : '订阅已启用', 'success');
+    }
+  };
+
+  const handleDelete = (subId: string) => {
+    const sub = subscriptions.find((s) => s.id === subId);
+    removeSubscription(subId);
+    if (sub) {
+      addOperationLog('删除', '订阅规则', sub.metricName, '删除订阅规则');
+      showToast('订阅已删除', 'success');
+    }
+  };
+
+  const handleEdit = (subId: string) => {
+    navigate(`/subscriptions/new?id=${subId}`);
+  };
+
+  const handleMarkAllRead = () => {
+    markAllAsRead();
+    addOperationLog('标记已读', '通知中心', '全部通知', '标记所有通知为已读');
+    showToast('已全部标记为已读', 'success');
   };
 
   return (
@@ -110,7 +143,7 @@ export default function SubscriptionList() {
                     <p className="text-xs text-white/60">{getThresholdDesc(sub)}</p>
                   </div>
                   <button
-                    onClick={() => toggleSubscription(sub.id)}
+                    onClick={() => handleToggle(sub.id, sub.enabled)}
                     className={cn(
                       'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out',
                       sub.enabled ? 'bg-brand' : 'bg-white/10',
@@ -143,13 +176,13 @@ export default function SubscriptionList() {
                   </div>
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => setEditingSub(sub.id)}
+                      onClick={() => handleEdit(sub.id)}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-white/50 hover:bg-white/5 hover:text-brand transition-all"
                     >
                       <Edit3 size={15} strokeWidth={2} />
                     </button>
                     <button
-                      onClick={() => removeSubscription(sub.id)}
+                      onClick={() => handleDelete(sub.id)}
                       className="flex h-8 w-8 items-center justify-center rounded-lg text-white/50 hover:bg-danger/10 hover:text-danger transition-all"
                     >
                       <Trash2 size={15} strokeWidth={2} />
@@ -167,7 +200,7 @@ export default function SubscriptionList() {
               共 {notifications.length} 条，未读 {unreadCount} 条
             </span>
             <button
-              onClick={markAllAsRead}
+              onClick={handleMarkAllRead}
               disabled={unreadCount === 0}
               className="text-xs text-brand hover:text-brand-400 disabled:text-white/30 disabled:cursor-not-allowed transition-all"
             >
@@ -210,7 +243,10 @@ export default function SubscriptionList() {
       )}
 
       {tab === 'subscriptions' && (
-        <button className="fixed right-4 bottom-28 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 hover:scale-105 active:scale-95 transition-all">
+        <button
+          onClick={() => navigate('/subscriptions/new')}
+          className="fixed right-4 bottom-28 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-brand text-white shadow-lg shadow-brand/30 hover:scale-105 active:scale-95 transition-all"
+        >
           <Plus size={22} strokeWidth={2.5} />
         </button>
       )}

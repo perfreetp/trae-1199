@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, X, Clock, FileText, AlertCircle, Lightbulb, Image as ImgIcon, Timer } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
+import { useTicketStore } from '@/stores/ticketStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 
 type RootCauseType = 'data' | 'business' | 'system' | 'other';
@@ -23,9 +26,23 @@ function FormLabel({ icon, children, required }: { icon?: React.ReactNode; child
   );
 }
 
+const rootCauseTypeMap: Record<RootCauseType, string> = {
+  data: '数据问题',
+  business: '业务问题',
+  system: '系统问题',
+  other: '其他问题',
+};
+
 export default function TicketHandle() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
+  const processTicket = useTicketStore((s) => s.processTicket);
+  const completeTicket = useTicketStore((s) => s.completeTicket);
+  const tickets = useTicketStore((s) => s.tickets);
+  const currentTicket = tickets.find((t) => t.id === id);
+
   const [rootCause, setRootCause] = useState<RootCauseType>('data');
   const [reason, setReason] = useState('');
   const [solution, setSolution] = useState('');
@@ -34,14 +51,39 @@ export default function TicketHandle() {
 
   const addImage = () => {
     if (images.length >= 9) return;
-    setImages([...images, `img_${Date.now()}`]);
+    setImages([...images, `img_${Date.now()}_${images.length}`]);
   };
   const removeImage = (idx: number) => {
     setImages(images.filter((_, i) => i !== idx));
   };
 
-  const handleSave = () => navigate(-1);
-  const handleSubmit = () => navigate(`/tickets/${id}`);
+  const handleSave = () => {
+    if (!id) return;
+    const reasonDetail = `[${rootCauseTypeMap[rootCause]}] ${reason}`;
+    processTicket(id, reasonDetail, solution || undefined, images);
+    addOperationLog('暂存', '工单处理', currentTicket?.title ?? id, `根因: ${reasonDetail}`);
+    showToast('已暂存处理结果', 'success');
+    navigate(-1);
+  };
+
+  const handleSubmit = () => {
+    if (!id) return;
+    if (!reason.trim()) {
+      showToast('请填写根因描述', 'warning');
+      return;
+    }
+    if (!solution.trim()) {
+      showToast('请填写解决方案', 'warning');
+      return;
+    }
+    const reasonDetail = `[${rootCauseTypeMap[rootCause]}] ${reason.trim()}`;
+    const solutionDetail = hours ? `${solution.trim()}（处理耗时: ${hours}小时）` : solution.trim();
+    processTicket(id, reasonDetail, solutionDetail, images);
+    completeTicket(id, solutionDetail);
+    addOperationLog('完成', '工单处理', currentTicket?.title ?? id, `根因: ${reasonDetail} | 方案: ${solutionDetail}`);
+    showToast('工单处理完成', 'success');
+    navigate(`/tickets/${id}`);
+  };
 
   return (
     <div className="min-h-screen bg-[#0F1326] pb-28">
@@ -107,8 +149,8 @@ export default function TicketHandle() {
             上传凭证（{images.length}/9）
           </FormLabel>
           <div className="grid grid-cols-3 gap-2">
-            {images.map((_, i) => (
-              <div key={i} className="relative aspect-square rounded-lg bg-white/5 border border-white/10 overflow-hidden">
+            {images.map((imgId, i) => (
+              <div key={imgId} className="relative aspect-square rounded-lg bg-white/5 border border-white/10 overflow-hidden">
                 <div className="h-full w-full bg-gradient-to-br from-brand/20 to-white/5 flex items-center justify-center">
                   <ImgIcon size={20} className="text-white/30" />
                 </div>

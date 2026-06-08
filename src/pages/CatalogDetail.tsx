@@ -8,7 +8,11 @@ import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ActionSheet, type ActionSheetItem } from '@/components/ActionSheet';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
-import { catalogs, catalogQuestions } from '@/data/mockData';
+import { useCatalogStore } from '@/stores/catalogStore';
+import { useApprovalStore } from '@/stores/approvalStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
+import { mockCurrentUser, mockCatalogs } from '@/data/mockData';
 import type { MetricCatalog, CatalogQuestion } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -87,10 +91,24 @@ function QuestionItem({ q }: { q: CatalogQuestion }) {
 export default function CatalogDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const catalog = catalogs.find((c) => c.id === id) ?? catalogs[0];
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
+  const addQuestion = useCatalogStore((s) => s.addQuestion);
+  const addRevisionRequest = useCatalogStore((s) => s.addRevisionRequest);
+  const catalogs = useCatalogStore((s) => s.catalogs);
+  const allQuestions = useCatalogStore((s) => s.questions);
+  const allRevisionRequests = useCatalogStore((s) => s.revisionRequests);
+  const loadApprovalLists = useApprovalStore((s) => s.loadLists);
+
+  const fallbackCatalog = mockCatalogs.find((c) => c.id === id) ?? mockCatalogs[0];
+  const catalog = useMemo(() => {
+    const found = catalogs.find((c) => c.id === id);
+    return found ?? fallbackCatalog;
+  }, [catalogs, id, fallbackCatalog]);
+
   const conf = statusMap[catalog.status];
 
-  const questions = useMemo(() => catalogQuestions.filter((q) => q.catalogId === catalog.id), [catalog.id]);
+  const questions = useMemo(() => allQuestions.filter((q) => q.catalogId === catalog.id), [allQuestions, catalog.id]);
   const ownerAvatars: AvatarItem[] = useMemo(() => [{ id: catalog.owner.id, src: catalog.owner.avatar, name: catalog.owner.name }], [catalog.owner]);
   const reviewerAvatars: AvatarItem[] = useMemo(() => catalog.reviewers.map((u) => ({ id: u.id, src: u.avatar, name: u.name })), [catalog.reviewers]);
   const allAvatars = useMemo(() => [...ownerAvatars, ...reviewerAvatars], [ownerAvatars, reviewerAvatars]);
@@ -107,6 +125,44 @@ export default function CatalogDetail() {
     { id: 'revision', label: '修订申请', icon: <FileEdit size={18} strokeWidth={2} /> },
     { id: 'share', label: '分享', icon: <Share2 size={18} strokeWidth={2} /> },
   ];
+
+  const handleSubmitQuestion = () => {
+    if (!questionText.trim()) {
+      showToast('请填写疑问内容', 'warning');
+      return;
+    }
+    addQuestion({
+      catalogId: catalog.id,
+      question: questionText.trim(),
+      screenshots: [],
+      asker: mockCurrentUser,
+    });
+    addOperationLog('提交', '口径疑问', catalog.metricName, questionText.trim());
+    setQuestionText('');
+    setModal(null);
+    showToast('疑问提交成功，负责人会尽快回复', 'success');
+  };
+
+  const handleSubmitRevision = () => {
+    if (!revReason.trim() || !revContent.trim()) {
+      showToast('请填写变更原因和建议内容', 'warning');
+      return;
+    }
+    addRevisionRequest({
+      catalogId: catalog.id,
+      type: revType,
+      reason: revReason.trim(),
+      suggestedContent: revContent.trim(),
+      applicant: mockCurrentUser,
+    });
+    loadApprovalLists();
+    addOperationLog('发起', '修订申请', catalog.metricName, `${revTypeMap[revType]}: ${revReason.trim()}`);
+    setRevReason('');
+    setRevContent('');
+    setRevType('update');
+    setModal(null);
+    showToast('修订申请已提交，请在审批中心查看进度', 'success');
+  };
 
   return (
     <div className="min-h-screen bg-[#0F1326] pb-28">
@@ -206,14 +262,19 @@ export default function CatalogDetail() {
           </div>
         </div>
 
-        {questions.length > 0 && (
-          <div className="mt-5">
-            <SectionTitle icon={<HelpCircle size={14} />} title={`相关疑问 (${questions.length})`} />
+        <div className="mt-5">
+          <SectionTitle icon={<HelpCircle size={14} />} title={`相关疑问 (${questions.length})`} />
+          {questions.length > 0 ? (
             <div className="space-y-2">
               {questions.map((q) => <QuestionItem key={q.id} q={q} />)}
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="rounded-xl bg-white/[0.02] border border-white/5 p-8 text-center">
+              <HelpCircle size={32} className="text-white/20 mx-auto mb-2" />
+              <p className="text-xs text-white/40">暂无疑问，点击下方按钮提出第一个问题</p>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 z-20 border-t border-white/5 bg-[#0F1326]/95 backdrop-blur-md px-4 py-3">
@@ -314,7 +375,7 @@ export default function CatalogDetail() {
               )}
               <button
                 type="button"
-                onClick={() => setModal(null)}
+                onClick={modal === 'question' ? handleSubmitQuestion : handleSubmitRevision}
                 className="min-h-11 w-full rounded-xl bg-brand text-sm font-semibold text-white shadow-lg shadow-brand/30 hover:bg-brand/90 active:scale-[0.98]"
               >
                 提交

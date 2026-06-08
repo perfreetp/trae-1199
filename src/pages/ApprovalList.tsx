@@ -1,9 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { TopBar } from '@/components/TopBar';
 import { BottomNav } from '@/components/BottomNav';
 import { StatusBadge } from '@/components/StatusBadge';
 import Empty from '@/components/Empty';
 import { useApprovalStore } from '@/stores/approvalStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import { Check, X, ChevronRight } from 'lucide-react';
 
@@ -17,8 +20,16 @@ const typeConfig: Record<RequestType, { label: string; bg: string; text: string 
 };
 
 export default function ApprovalList() {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TabKey>('pending');
-  const { pendingList, approvedList } = useApprovalStore();
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
+  const { pendingList, approvedList, submitApproval, loadLists } = useApprovalStore();
+
+  useEffect(() => {
+    loadLists();
+  }, [loadLists]);
+
   const list = tab === 'pending' ? pendingList : approvedList;
 
   const listWithApprovedCount = useMemo(() => {
@@ -27,6 +38,30 @@ export default function ApprovalList() {
       approvedCount: item.approvals.reduce((acc, a) => acc + (a.status === 'approved' ? 1 : 0), 0),
     }));
   }, [list]);
+
+  const handleQuickApprove = (e: React.MouseEvent, item: typeof listWithApprovedCount[0]) => {
+    e.stopPropagation();
+    const idx = item.approvals.findIndex((a) => a.status === 'pending');
+    if (idx < 0) {
+      showToast('没有待您审批的节点', 'warning');
+      return;
+    }
+    submitApproval(item.id, idx, true, '快捷审批通过');
+    addOperationLog('通过', '审批中心', item.suggestedContent, '快捷审批');
+    showToast('已通过审批', 'success');
+  };
+
+  const handleQuickReject = (e: React.MouseEvent, item: typeof listWithApprovedCount[0]) => {
+    e.stopPropagation();
+    const idx = item.approvals.findIndex((a) => a.status === 'pending');
+    if (idx < 0) {
+      showToast('没有待您审批的节点', 'warning');
+      return;
+    }
+    submitApproval(item.id, idx, false, '快捷审批拒绝');
+    addOperationLog('拒绝', '审批中心', item.suggestedContent, '快捷审批');
+    showToast('已拒绝审批', 'warning');
+  };
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -79,9 +114,10 @@ export default function ApprovalList() {
             return (
               <div
                 key={item.id}
+                onClick={() => navigate(`/approvals/${item.id}`)}
                 className={cn(
                   'rounded-2xl p-4 transition-all duration-300 cursor-pointer',
-                  'bg-background-card border border-white/5 hover:border-white/10',
+                  'bg-background-card border border-white/5 hover:border-white/10 active:scale-[0.99]',
                 )}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -119,14 +155,14 @@ export default function ApprovalList() {
                   {tab === 'pending' ? (
                     <div className="flex items-center gap-1.5">
                       <button
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => handleQuickReject(e, item)}
                         className="flex h-8 items-center gap-1 rounded-lg bg-danger/15 px-3 text-xs font-medium text-danger hover:bg-danger/25 transition-all"
                       >
                         <X size={13} strokeWidth={2.5} />
                         拒绝
                       </button>
                       <button
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => handleQuickApprove(e, item)}
                         className="flex h-8 items-center gap-1 rounded-lg bg-success px-3 text-xs font-medium text-background hover:bg-success/90 transition-all"
                       >
                         <Check size={13} strokeWidth={2.5} />

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Subscription, Notification } from '../types';
 import { mockSubscriptions, mockNotifications } from '../data/mockData';
+import { loadPersist, savePersist } from './persist';
 
 interface SubscriptionState {
   subscriptions: Subscription[];
@@ -16,10 +17,13 @@ interface SubscriptionState {
   loadUnreadCount: () => void;
 }
 
+const storedSubscriptions = loadPersist<Subscription[]>('subscriptions', mockSubscriptions);
+const storedNotifications = loadPersist<Notification[]>('notifications', mockNotifications);
+
 export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
-  subscriptions: mockSubscriptions,
-  notifications: mockNotifications,
-  unreadCount: mockNotifications.filter((n) => !n.isRead).length,
+  subscriptions: storedSubscriptions,
+  notifications: storedNotifications,
+  unreadCount: storedNotifications.filter((n) => !n.isRead).length,
 
   addSubscription: (sub) => {
     const newSub: Subscription = {
@@ -27,35 +31,44 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
       id: `s${Date.now()}`,
       createdAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
     };
-    set((state) => ({
-      subscriptions: [...state.subscriptions, newSub],
-    }));
+    set((state) => {
+      const newSubscriptions = [...state.subscriptions, newSub];
+      savePersist('subscriptions', newSubscriptions);
+      return { subscriptions: newSubscriptions };
+    });
   },
 
   removeSubscription: (subId) =>
-    set((state) => ({
-      subscriptions: state.subscriptions.filter((s) => s.id !== subId),
-    })),
+    set((state) => {
+      const newSubscriptions = state.subscriptions.filter((s) => s.id !== subId);
+      savePersist('subscriptions', newSubscriptions);
+      return { subscriptions: newSubscriptions };
+    }),
 
   toggleSubscription: (subId) =>
-    set((state) => ({
-      subscriptions: state.subscriptions.map((s) =>
+    set((state) => {
+      const newSubscriptions = state.subscriptions.map((s) =>
         s.id === subId ? { ...s, enabled: !s.enabled } : s
-      ),
-    })),
+      );
+      savePersist('subscriptions', newSubscriptions);
+      return { subscriptions: newSubscriptions };
+    }),
 
   updateSubscription: (subId, updates) =>
-    set((state) => ({
-      subscriptions: state.subscriptions.map((s) =>
+    set((state) => {
+      const newSubscriptions = state.subscriptions.map((s) =>
         s.id === subId ? { ...s, ...updates } : s
-      ),
-    })),
+      );
+      savePersist('subscriptions', newSubscriptions);
+      return { subscriptions: newSubscriptions };
+    }),
 
   markAsRead: (notificationId) =>
     set((state) => {
       const notifications = state.notifications.map((n) =>
         n.id === notificationId ? { ...n, isRead: true } : n
       );
+      savePersist('notifications', notifications);
       return {
         notifications,
         unreadCount: notifications.filter((n) => !n.isRead).length,
@@ -65,12 +78,14 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
   markAllAsRead: () =>
     set((state) => {
       const notifications = state.notifications.map((n) => ({ ...n, isRead: true }));
+      savePersist('notifications', notifications);
       return { notifications, unreadCount: 0 };
     }),
 
   clearNotification: (notificationId) =>
     set((state) => {
       const notifications = state.notifications.filter((n) => n.id !== notificationId);
+      savePersist('notifications', notifications);
       return {
         notifications,
         unreadCount: notifications.filter((n) => !n.isRead).length,

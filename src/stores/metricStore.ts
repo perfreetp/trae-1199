@@ -6,6 +6,7 @@ import {
   mockDrillDownData,
   mockTimeRange,
 } from '../data/mockData';
+import { loadPersist, savePersist } from './persist';
 
 interface MetricState {
   metrics: Metric[];
@@ -23,17 +24,27 @@ interface MetricState {
   getFilteredMetrics: () => Metric[];
 }
 
+const storedMetrics = loadPersist<Metric[]>('metrics', mockMetrics);
+const storedDeptId = loadPersist<string>('selectedDeptId', 'd0');
+const storedTimeRange = loadPersist<TimeRange>('timeRange', mockTimeRange);
+
 export const useMetricStore = create<MetricState>((set, get) => ({
-  metrics: mockMetrics,
-  selectedDepartmentId: 'd0',
-  timeRange: mockTimeRange,
+  metrics: storedMetrics,
+  selectedDepartmentId: storedDeptId,
+  timeRange: storedTimeRange,
   selectedMetric: null,
   trendData: mockTrendData['m1'] || [],
   drillDownData: mockDrillDownData,
 
-  setSelectedDepartment: (deptId) => set({ selectedDepartmentId: deptId }),
+  setSelectedDepartment: (deptId) => {
+    set({ selectedDepartmentId: deptId });
+    savePersist('selectedDeptId', deptId);
+  },
 
-  setTimeRange: (range) => set({ timeRange: range }),
+  setTimeRange: (range) => {
+    set({ timeRange: range });
+    savePersist('timeRange', range);
+  },
 
   setSelectedMetric: (metric) => set({ selectedMetric: metric }),
 
@@ -46,12 +57,15 @@ export const useMetricStore = create<MetricState>((set, get) => ({
     set({ drillDownData: mockDrillDownData });
   },
 
-  toggleFavorite: (metricId) =>
-    set((state) => ({
-      metrics: state.metrics.map((m) =>
+  toggleFavorite: (metricId) => {
+    set((state) => {
+      const newMetrics = state.metrics.map((m) =>
         m.id === metricId ? { ...m, isFavorite: !m.isFavorite } : m
-      ),
-    })),
+      );
+      savePersist('metrics', newMetrics);
+      return { metrics: newMetrics };
+    });
+  },
 
   getFilteredMetrics: () => {
     const { metrics, selectedDepartmentId } = get();

@@ -1,9 +1,13 @@
+import React, { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Clock, AlertTriangle, FileText, Users, Target } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
-import { tickets, departments } from '@/data/mockData';
+import { useTicketStore } from '@/stores/ticketStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
+import { mockTickets, departments } from '@/data/mockData';
 import type { AnomalyTicket } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -32,13 +36,29 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
 export default function TicketDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const t = tickets.find((x) => x.id === id) ?? tickets[0];
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
+  const tickets = useTicketStore((s) => s.tickets);
+  const claimTicket = useTicketStore((s) => s.claimTicket);
+
+  const fallbackTicket = mockTickets.find((x) => x.id === id) ?? mockTickets[0];
+  const t = useMemo(() => {
+    const found = tickets.find((x) => x.id === id);
+    return found ?? fallbackTicket;
+  }, [tickets, id, fallbackTicket]);
+
   const lc = levelConfig[t.level];
   const sc = statusConf[t.status];
   const dept = departments.find((d) => d.id === t.departmentId);
   const assigneeAvatar: AvatarItem | undefined = t.assignee
     ? { id: t.assignee.id, src: t.assignee.avatar, name: t.assignee.name }
     : undefined;
+
+  const handleClaim = () => {
+    claimTicket(t.id);
+    addOperationLog('认领', '异常工单', t.title, '一键认领并开始处理');
+    showToast('工单已认领，状态变为处理中', 'success');
+  };
 
   return (
     <div className="min-h-screen bg-[#0F1326] pb-28">
@@ -158,7 +178,13 @@ export default function TicketDetail() {
                   <div className="grid grid-cols-3 gap-2">
                     {t.evidences.map((e, i) => (
                       <div key={i} className="aspect-square rounded-lg bg-white/5 border border-white/5 overflow-hidden">
-                        <img src={e} alt="" className="h-full w-full object-cover" />
+                        {e.startsWith('http') || e.startsWith('data:') ? (
+                          <img src={e} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full bg-gradient-to-br from-brand/20 to-white/5 flex items-center justify-center">
+                            <FileText size={20} className="text-white/30" />
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -174,6 +200,7 @@ export default function TicketDetail() {
           {t.status === 'pending' && (
             <button
               type="button"
+              onClick={handleClaim}
               className="w-full min-h-12 rounded-xl bg-gradient-to-r from-brand to-brand/80 text-sm font-semibold text-white shadow-xl shadow-brand/30 hover:brightness-110 active:scale-[0.98] transition-all duration-300"
             >
               一键认领

@@ -1,8 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { TopBar } from '@/components/TopBar';
 import { BottomNav } from '@/components/BottomNav';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
 import { useMetricStore } from '@/stores/metricStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
+import { useUIStore } from '@/stores/uiStore';
 import { cn } from '@/lib/utils';
 import {
   ChevronDown,
@@ -35,15 +38,22 @@ const channelOptions: { key: ChannelType; label: string; icon: React.ReactNode }
 ];
 
 export default function SubscriptionForm() {
-  const isEdit = false;
-  const { addSubscription } = useSubscriptionStore();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editId = searchParams.get('id');
+  const isEdit = !!editId;
+  const { addSubscription, updateSubscription, subscriptions } = useSubscriptionStore();
   const { metrics } = useMetricStore();
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
 
-  const [metricId, setMetricId] = useState<string>('');
-  const [condition, setCondition] = useState<ConditionType>('below');
-  const [thresholdValue, setThresholdValue] = useState<string>('');
-  const [level, setLevel] = useState<LevelType>('warning');
-  const [channels, setChannels] = useState<ChannelType[]>(['app']);
+  const editingSub = useMemo(() => subscriptions.find((s) => s.id === editId), [subscriptions, editId]);
+
+  const [metricId, setMetricId] = useState<string>(editingSub?.metricId ?? '');
+  const [condition, setCondition] = useState<ConditionType>((editingSub?.thresholds?.[0]?.type as ConditionType) ?? 'below');
+  const [thresholdValue, setThresholdValue] = useState<string>(editingSub?.thresholds?.[0]?.value?.toString() ?? '');
+  const [level, setLevel] = useState<LevelType>((editingSub?.thresholds?.[0]?.level as LevelType) ?? 'warning');
+  const [channels, setChannels] = useState<ChannelType[]>((editingSub?.notifyChannels as ChannelType[]) ?? ['app']);
   const [remark, setRemark] = useState<string>('');
   const [showMetricPicker, setShowMetricPicker] = useState(false);
 
@@ -56,19 +66,40 @@ export default function SubscriptionForm() {
   };
 
   const handleSubmit = () => {
-    if (!metricId || !thresholdValue) return;
+    if (!metricId || !thresholdValue) {
+      showToast('请选择指标并填写阈值', 'warning');
+      return;
+    }
+    if (channels.length === 0) {
+      showToast('请至少选择一个通知渠道', 'warning');
+      return;
+    }
     const threshold: Threshold = {
       type: condition,
       value: parseFloat(thresholdValue),
       level,
     };
-    addSubscription({
-      metricId,
-      metricName: selectedMetric?.name || '',
-      thresholds: [threshold],
-      notifyChannels: channels,
-      enabled: true,
-    });
+    if (isEdit && editId) {
+      updateSubscription(editId, {
+        metricId,
+        metricName: selectedMetric?.name || '',
+        thresholds: [threshold],
+        notifyChannels: channels,
+      });
+      addOperationLog('编辑', '订阅规则', selectedMetric?.name ?? editId, '修改订阅规则配置');
+      showToast('订阅修改成功', 'success');
+    } else {
+      addSubscription({
+        metricId,
+        metricName: selectedMetric?.name || '',
+        thresholds: [threshold],
+        notifyChannels: channels,
+        enabled: true,
+      });
+      addOperationLog('创建', '订阅规则', selectedMetric?.name ?? '新订阅', `创建订阅规则：${conditionLabels[condition]} ${thresholdValue}`);
+      showToast('订阅创建成功', 'success');
+    }
+    navigate(-1);
   };
 
   return (

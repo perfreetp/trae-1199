@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { RevisionRequest, ApprovalNode } from '../types';
 import { mockRevisionRequests, mockCurrentUser } from '../data/mockData';
+import { useCatalogStore } from './catalogStore';
+import { loadPersist, savePersist } from './persist';
 
 interface ApprovalState {
   pendingList: RevisionRequest[];
@@ -12,18 +14,27 @@ interface ApprovalState {
   loadLists: () => void;
 }
 
-export const useApprovalStore = create<ApprovalState>((set) => {
-  const splitByStatus = (list: RevisionRequest[]) => {
-    const pending: RevisionRequest[] = [];
-    const approved: RevisionRequest[] = [];
-    list.forEach((item) => {
-      if ((item.status as string) === 'pending') pending.push(item);
-      else approved.push(item);
-    });
-    return { pending, approved };
-  };
+const splitByStatus = (list: RevisionRequest[]) => {
+  const pending: RevisionRequest[] = [];
+  const approved: RevisionRequest[] = [];
+  list.forEach((item) => {
+    if ((item.status as string) === 'pending') pending.push(item);
+    else approved.push(item);
+  });
+  return { pending, approved };
+};
 
-  const initial = splitByStatus(mockRevisionRequests);
+export const useApprovalStore = create<ApprovalState>((set, get) => {
+  const initialSource = loadPersist<RevisionRequest[]>('catalog_revision_requests', mockRevisionRequests);
+  const initial = splitByStatus(initialSource);
+
+  const syncToCatalog = (allRequests: RevisionRequest[]) => {
+    savePersist('catalog_revision_requests', allRequests);
+    const catalogState = useCatalogStore.getState();
+    if (catalogState && catalogState.revisionRequests) {
+      catalogState.revisionRequests = allRequests;
+    }
+  };
 
   return {
     pendingList: initial.pending,
@@ -60,7 +71,10 @@ export const useApprovalStore = create<ApprovalState>((set) => {
       set((state) => {
         const newPending = updateApproval(state.pendingList);
         const newApproved = updateApproval(state.approvedList);
-        const split = splitByStatus([...newPending, ...newApproved]);
+        const allRequests = [...newPending, ...newApproved];
+        const split = splitByStatus(allRequests);
+        syncToCatalog(allRequests);
+        useCatalogStore.getState().revisionRequests = allRequests;
         return { pendingList: split.pending, approvedList: split.approved };
       });
     },
@@ -72,13 +86,17 @@ export const useApprovalStore = create<ApprovalState>((set) => {
       set((state) => {
         const newApproved = updateStatus(state.approvedList);
         const newPending = updateStatus(state.pendingList);
-        const split = splitByStatus([...newPending, ...newApproved]);
+        const allRequests = [...newPending, ...newApproved];
+        const split = splitByStatus(allRequests);
+        syncToCatalog(allRequests);
+        useCatalogStore.getState().revisionRequests = allRequests;
         return { pendingList: split.pending, approvedList: split.approved };
       });
     },
 
     loadLists: () => {
-      const split = splitByStatus(mockRevisionRequests);
+      const catalogRequests = useCatalogStore.getState().revisionRequests;
+      const split = splitByStatus(catalogRequests);
       set({ pendingList: split.pending, approvedList: split.approved });
     },
   };

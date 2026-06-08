@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Search, Bell, ClipboardList, CheckSquare, AlertTriangle } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Search, Bell, ClipboardList, CheckSquare, AlertTriangle, Share2, Copy, Check } from 'lucide-react';
 import { SearchBar } from '@/components/SearchBar';
 import { DepartmentFilter } from '@/components/DepartmentFilter';
-import { TimeRangePicker, type TimeRange } from '@/components/TimeRangePicker';
+import { TimeRangePicker } from '@/components/TimeRangePicker';
+import type { TimeRange } from '@/types';
 import { MetricCard, type GradientPreset } from '@/components/MetricCard';
 import { TrendChart, type TrendDataPoint } from '@/components/TrendChart';
 import { BottomNav, type TabKey } from '@/components/BottomNav';
@@ -11,6 +12,8 @@ import { useMetricStore } from '@/stores/metricStore';
 import { useTicketStore } from '@/stores/ticketStore';
 import { useApprovalStore } from '@/stores/approvalStore';
 import { useSubscriptionStore } from '@/stores/subscriptionStore';
+import { useUIStore } from '@/stores/uiStore';
+import { useFavoriteStore } from '@/stores/favoriteStore';
 import type { Department } from '@/types';
 import { departments } from '@/data/mockData';
 
@@ -18,17 +21,60 @@ const gradients: GradientPreset[] = ['blue', 'green', 'orange', 'purple', 'red',
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [trendTab, setTrendTab] = useState<'gmv' | 'compare'>('gmv');
-  const [timeRange, setTimeRange] = useState<TimeRange>('day');
+  const { showToast } = useUIStore();
+  const { addOperationLog } = useFavoriteStore();
 
   const allMetrics = useMetricStore((s) => s.metrics);
   const selectedDepartmentId = useMetricStore((s) => s.selectedDepartmentId);
   const setSelectedDepartment = useMetricStore((s) => s.setSelectedDepartment);
+  const storeTimeRange = useMetricStore((s) => s.timeRange);
+  const setStoreTimeRange = useMetricStore((s) => s.setTimeRange);
   const trendData = useMetricStore((s) => s.trendData);
   const allTickets = useTicketStore((s) => s.tickets);
   const pendingList = useApprovalStore((s) => s.pendingList);
   const unreadCount = useSubscriptionStore((s) => s.unreadCount);
+
+  const [timeRange, setTimeRangeLocal] = useState<TimeRange>(storeTimeRange);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  useEffect(() => {
+    const deptParam = searchParams.get('dept');
+    const rangeParam = searchParams.get('range') as TimeRange | null;
+    const validRanges: TimeRange[] = ['day', 'week', 'month', 'quarter', 'year'];
+    if (deptParam) setSelectedDepartment(deptParam);
+    if (rangeParam && validRanges.includes(rangeParam)) {
+      setStoreTimeRange(rangeParam);
+      setTimeRangeLocal(rangeParam);
+    }
+  }, []);
+
+  const handleTimeRangeChange = (range: TimeRange) => {
+    setTimeRangeLocal(range);
+    setStoreTimeRange(range);
+  };
+
+  const handleShare = async () => {
+    try {
+      const deptName = departments.find((d) => d.id === selectedDepartmentId)?.name ?? '全公司';
+      const rangeText: Record<TimeRange, string> = {
+        day: '今日', week: '本周', month: '本月', quarter: '本季度', year: '本年',
+      };
+      const params = new URLSearchParams();
+      params.set('dept', selectedDepartmentId);
+      params.set('range', timeRange);
+      const shareUrl = `${window.location.origin}/dashboard?${params.toString()}`;
+      await navigator.clipboard.writeText(shareUrl);
+      setCopySuccess(true);
+      addOperationLog('分享', '首页看板', `${deptName} - ${rangeText[timeRange]}`, shareUrl);
+      showToast('看板链接已复制到剪贴板', 'success');
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      showToast('复制失败，请手动复制', 'warning');
+    }
+  };
 
   const ticketCounts = useMemo(() => {
     const pending = allTickets.filter((t) => t.status === 'pending').length;
@@ -87,6 +133,16 @@ const Dashboard: React.FC = () => {
               onSubmit={() => navigate('/search')}
             />
           </div>
+          <button
+            onClick={handleShare}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-background-card transition-all duration-300 hover:bg-white/5 active:scale-95"
+          >
+            {copySuccess ? (
+              <Check size={20} strokeWidth={2} className="text-success" />
+            ) : (
+              <Share2 size={20} strokeWidth={2} className="text-white/70" />
+            )}
+          </button>
           <div className="relative">
             <button className="flex h-11 w-11 items-center justify-center rounded-full bg-background-card transition-all duration-300 hover:bg-white/5 active:scale-95">
               <Bell size={20} strokeWidth={2} className="text-white/70" />
@@ -150,7 +206,7 @@ const Dashboard: React.FC = () => {
 
         <div className="mt-4 flex items-center justify-between">
           <p className="text-sm font-semibold text-white">核心指标</p>
-          <TimeRangePicker value={timeRange} onChange={setTimeRange} />
+          <TimeRangePicker value={timeRange} onChange={handleTimeRangeChange} />
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-3">

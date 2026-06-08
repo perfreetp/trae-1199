@@ -497,11 +497,7 @@ export const mockNotifications = notifications;
 export const mockFavoriteCategories = favoriteCategories;
 export const mockOperationLogs = operationLogs;
 export const mockCurrentUser = currentUser;
-export const mockTimeRange: TimeRange = {
-  type: 'month',
-  startDate: '2026-05-11',
-  endDate: '2026-06-09',
-};
+export const mockTimeRange: TimeRange = 'month';
 
 
 

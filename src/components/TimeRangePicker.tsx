@@ -1,7 +1,6 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-
-export type TimeRange = "day" | "week" | "month" | "quarter" | "year";
+import type { TimeRange } from "@/types";
 
 interface TimeRangeOption {
   key: TimeRange;

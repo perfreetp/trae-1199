@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { AnomalyTicket, TicketTimeline } from '../types';
 import { mockTickets, mockCurrentUser } from '../data/mockData';
+import { loadPersist, savePersist } from './persist';
 
 type TicketStatusFilter = 'all' | AnomalyTicket['status'];
 
@@ -18,8 +19,10 @@ interface TicketState {
   getTicketCounts: () => Record<TicketStatusFilter, number>;
 }
 
+const storedTickets = loadPersist<AnomalyTicket[]>('tickets', mockTickets);
+
 export const useTicketStore = create<TicketState>((set, get) => ({
-  tickets: mockTickets,
+  tickets: storedTickets,
   statusFilter: 'all',
   currentTicket: null,
 
@@ -35,18 +38,20 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       remark: '已认领处理',
       timestamp: now,
     };
-    set((state) => ({
-      tickets: state.tickets.map((t) =>
+    set((state) => {
+      const newTickets = state.tickets.map((t) =>
         t.id === ticketId
           ? {
               ...t,
               handler: mockCurrentUser,
-              status: 'processing',
+              status: 'processing' as const,
               timestamps: [...t.timestamps, timeline],
             }
           : t
-      ),
-    }));
+      );
+      savePersist('tickets', newTickets);
+      return { tickets: newTickets };
+    });
   },
 
   processTicket: (ticketId, rootCause, resolution, evidences = []) => {
@@ -57,8 +62,8 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       remark: rootCause,
       timestamp: now,
     };
-    set((state) => ({
-      tickets: state.tickets.map((t) =>
+    set((state) => {
+      const newTickets = state.tickets.map((t) =>
         t.id === ticketId
           ? {
               ...t,
@@ -68,8 +73,10 @@ export const useTicketStore = create<TicketState>((set, get) => ({
               timestamps: [...t.timestamps, timeline],
             }
           : t
-      ),
-    }));
+      );
+      savePersist('tickets', newTickets);
+      return { tickets: newTickets };
+    });
   },
 
   completeTicket: (ticketId, resolution) => {
@@ -80,13 +87,15 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       remark: resolution,
       timestamp: now,
     };
-    set((state) => ({
-      tickets: state.tickets.map((t) =>
+    set((state) => {
+      const newTickets = state.tickets.map((t) =>
         t.id === ticketId
-          ? { ...t, status: 'completed', resolution, timestamps: [...t.timestamps, timeline] }
+          ? { ...t, status: 'completed' as const, resolution, timestamps: [...t.timestamps, timeline] }
           : t
-      ),
-    }));
+      );
+      savePersist('tickets', newTickets);
+      return { tickets: newTickets };
+    });
   },
 
   addTimeline: (ticketId, action, remark) => {
@@ -97,11 +106,13 @@ export const useTicketStore = create<TicketState>((set, get) => ({
       remark,
       timestamp: now,
     };
-    set((state) => ({
-      tickets: state.tickets.map((t) =>
+    set((state) => {
+      const newTickets = state.tickets.map((t) =>
         t.id === ticketId ? { ...t, timestamps: [...t.timestamps, timeline] } : t
-      ),
-    }));
+      );
+      savePersist('tickets', newTickets);
+      return { tickets: newTickets };
+    });
   },
 
   getFilteredTickets: () => {
