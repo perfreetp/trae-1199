@@ -11,6 +11,9 @@ import {
   Bell,
   Image as ImgIcon,
   MessageSquare,
+  AlertCircle,
+  CheckCircle,
+  UserCircle2,
 } from 'lucide-react';
 import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -18,16 +21,9 @@ import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
 import { useTicketStore } from '@/stores/ticketStore';
 import { useFavoriteStore } from '@/stores/favoriteStore';
 import { useUIStore } from '@/stores/uiStore';
-import { mockTickets, departments } from '@/data/mockData';
-import type { AnomalyTicket, TicketComment } from '@/types';
+import { mockTickets, departments, mockUsers } from '@/data/mockData';
+import type { AnomalyTicket, TicketComment, User } from '@/types';
 import { cn } from '@/lib/utils';
-
-const SLA_HOURS: Record<AnomalyTicket['level'], number> = {
-  critical: 4,
-  high: 8,
-  medium: 24,
-  low: 48,
-};
 
 const levelConfig: Record<AnomalyTicket['level'], { bg: string; border: string; text: string; label: string }> = {
   critical: { bg: 'bg-danger/15', border: 'border-danger/30', text: 'text-danger', label: '严重' },
@@ -84,32 +80,20 @@ function parseDate(s: string): Date {
   return new Date(s.replace(/-/g, '/'));
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 0) {
-    const abs = Math.abs(ms);
-    const h = Math.floor(abs / 3600000);
-    const m = Math.floor((abs % 3600000) / 60000);
-    return `超时${h}小时${m}分`;
+function mapSlaStatus(status: 'overdue' | 'warning-1h' | 'warning-4h' | 'safe'): SlaStatus {
+  switch (status) {
+    case 'overdue': return 'danger';
+    case 'warning-1h': return 'warning';
+    case 'warning-4h': return 'yellow';
+    default: return 'success';
   }
-  const h = Math.floor(ms / 3600000);
-  const m = Math.floor((ms % 3600000) / 60000);
-  if (h > 0) return `${h}小时${m}分`;
-  return `${m}分钟`;
 }
 
-function computeSla(t: AnomalyTicket, now: number) {
-  const deadline = parseDate(t.slaDeadline).getTime();
-  const base = parseDate(t.detectedAt || t.createdAt).getTime();
-  const totalMs = SLA_HOURS[t.level] * 3600000;
-  const remaining = deadline - now;
-  const elapsed = now - base;
-  const percent = Math.max(0, Math.min(100, (remaining / totalMs) * 100));
-  let status: SlaStatus = 'success';
-  if (remaining <= 0) status = 'danger';
-  else if (remaining <= 3600000) status = 'warning';
-  else if (remaining <= 4 * 3600000) status = 'yellow';
-  const completedPercent = 100 - percent;
-  return { remaining, percent, completedPercent, status, totalMs, elapsed };
+function formatOverdueDuration(seconds: number): string {
+  const abs = Math.abs(Math.floor(seconds));
+  const h = Math.floor(abs / 3600);
+  const m = Math.floor((abs % 3600) / 60);
+  return `超时${h}h${m}m`;
 }
 
 function highlightMentions(content: string, mentions?: string[]) {
@@ -142,6 +126,10 @@ export default function TicketDetail() {
   const claimTicket = useTicketStore((s) => s.claimTicket);
   const urgeTicket = useTicketStore((s) => s.urgeTicket);
   const addComment = useTicketStore((s) => s.addComment);
+  const setListTab = useTicketStore((s) => s.setListTab);
+  const setStatusFilter = useTicketStore((s) => s.setStatusFilter);
+  const reassignTicket = useTicketStore((s) => s.reassignTicket);
+  const getSLAInfo = useTicketStore((s) => s.getSLAInfo);
 
   const fallbackTicket = mockTickets.find((x) => x.id === id) ?? mockTickets[0];
   const t = useMemo(() => {
@@ -157,14 +145,17 @@ export default function TicketDetail() {
   const [now, setNow] = useState(Date.now());
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [commentContent, setCommentContent] = useState('');
+  const [showReassignModal, setShowReassignModal] = useState(false);
 
   useMemo(() => {
     const timer = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(timer);
   }, []);
 
-  const sla = computeSla(t, now);
-  const slaConf = slaStatusConfig[sla.status];
+  const slaInfo = getSLAInfo(t.id, now);
+  const slaStatus = mapSlaStatus(slaInfo.status);
+  const slaConf = slaStatusConfig[slaStatus];
+  const completedPercent = 100 - slaInfo.percent;
 
   const lc = levelConfig[t.level];
   const sc = statusConf[t.status];
@@ -173,10 +164,22 @@ export default function TicketDetail() {
     ? { id: t.assignee.id, src: t.assignee.avatar, name: t.assignee.name }
     : undefined;
 
+  const reassignCandidates = useMemo(() => {
+    return mockUsers.filter((u) => !t.handler || u.id !== t.handler.id);
+  }, [t.handler]);
+
+  const handleBack = () => {
+    setListTab(t.status);
+    navigate('/tickets');
+  };
+
   const handleClaim = () => {
     claimTicket(t.id);
     addOperationLog('认领', '异常工单', t.title, '一键认领并开始处理');
     showToast('工单已认领，状态变为处理中', 'success');
+    setStatusFilter('processing');
+    setListTab('processing');
+    navigate('/tickets');
   };
 
   const handleUrge = () => {
@@ -197,6 +200,13 @@ export default function TicketDetail() {
     showToast('评论已发送', 'success');
   };
 
+  const handleReassign = (user: User) => {
+    reassignTicket(t.id, user);
+    addOperationLog('转派', '异常工单', t.title, `转派给${user.name}`);
+    showToast(`已转派给 ${user.name}`, 'success');
+    setShowReassignModal(false);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -209,7 +219,7 @@ export default function TicketDetail() {
       <TopBar
         title="工单详情"
         showBack
-        onBack={() => navigate(-1)}
+        onBack={handleBack}
         actions={[]}
         onAction={() => {}}
       />
@@ -226,10 +236,10 @@ export default function TicketDetail() {
                   {lc.label}
                 </span>
                 <StatusBadge status={sc.status} text={sc.text} size="sm" showIcon={false} />
-                {t.urgedCount > 0 && (
+                {slaInfo.urgedCount > 0 && (
                   <span className="relative inline-flex items-center rounded-md bg-danger/15 border border-danger/30 px-2 py-0.5 text-[10px] font-bold text-danger">
                     <Bell size={10} className="mr-0.5" />
-                    已催办{t.urgedCount}次
+                    催办{slaInfo.urgedCount}次
                   </span>
                 )}
               </div>
@@ -260,47 +270,100 @@ export default function TicketDetail() {
         <div className="mt-5">
           <SectionTitle icon={<Clock size={14} />} title="SLA 处理时效" />
           <div className="rounded-xl bg-background-card border border-white/5 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold border', slaConf.badgeBg)}>
-                  {slaConf.badgeText}
-                </span>
-                <span className="text-[10px] text-white/40">
-                  截止：{t.slaDeadline.slice(5, 16)}
-                </span>
+            {t.status !== 'completed' ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold border', slaConf.badgeBg)}>
+                      {slaConf.badgeText}
+                    </span>
+                    <span className="text-[10px] text-white/40">
+                      截止：{t.slaDeadline.slice(5, 16)}
+                    </span>
+                  </div>
+                  <span className={cn(
+                    'text-xs font-bold',
+                    slaStatus === 'danger' ? 'text-danger' :
+                    slaStatus === 'warning' ? 'text-warning' :
+                    slaStatus === 'yellow' ? 'text-yellow-400' : 'text-success',
+                  )}>
+                    {slaInfo.remainingText}
+                  </span>
+                </div>
+                <div className="relative h-2 w-full rounded-full bg-white/5 overflow-hidden">
+                  <div
+                    className={cn('absolute left-0 top-0 h-full rounded-full transition-all duration-500', slaConf.bar)}
+                    style={{ width: `${completedPercent}%` }}
+                  />
+                  <div
+                    className="absolute top-0 h-full w-0.5 bg-white/30"
+                    style={{ left: `${completedPercent}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-white/40">
+                  <span>已消耗 {completedPercent.toFixed(0)}%</span>
+                  <span>剩余 {slaInfo.percent.toFixed(0)}%</span>
+                </div>
+                {slaInfo.urgedCount > 0 && (
+                  <div className="flex items-center gap-1.5 text-[11px] text-danger">
+                    <Bell size={12} />
+                    <span>已被催办 <span className="font-bold">{slaInfo.urgedCount}</span> 次</span>
+                  </div>
+                )}
+                {t.status === 'processing' && (
+                  <button
+                    type="button"
+                    onClick={handleUrge}
+                    className="w-full min-h-10 mt-1 rounded-lg bg-danger/10 border border-danger/20 text-xs font-medium text-danger hover:bg-danger/15 active:scale-[0.98] transition-all duration-300 flex items-center justify-center gap-1.5"
+                  >
+                    <Bell size={12} />
+                    发起催办
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[11px] text-white/40">完成时间</span>
+                  <span className="text-xs font-medium text-white/80">
+                    {slaInfo.completedInfo?.completedTime?.slice(5, 16) ?? t.createdAt.slice(5, 16)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[11px] text-white/40">完成状态</span>
+                  {slaInfo.completedInfo?.overdueCompleted ? (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-danger/10 border border-danger/20 px-2 py-0.5 text-[11px] font-medium text-danger">
+                      <AlertCircle size={12} />
+                      超时完成
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-success/10 border border-success/20 px-2 py-0.5 text-[11px] font-medium text-success">
+                      <CheckCircle size={12} />
+                      按时完成
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[11px] text-white/40">超时时长</span>
+                  <span className={cn(
+                    'text-xs font-medium',
+                    slaInfo.completedInfo?.overdueCompleted ? 'text-danger' : 'text-white/40',
+                  )}>
+                    {slaInfo.completedInfo?.overdueCompleted
+                      ? formatOverdueDuration(slaInfo.completedInfo.overdueSeconds)
+                      : '-'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-1">
+                  <span className="text-[11px] text-white/40">催办次数</span>
+                  <span className={cn(
+                    'text-xs font-medium',
+                    slaInfo.urgedCount > 0 ? 'text-danger' : 'text-white/60',
+                  )}>
+                    {slaInfo.urgedCount} 次
+                  </span>
+                </div>
               </div>
-              <span className={cn(
-                'text-xs font-bold',
-                sla.status === 'danger' ? 'text-danger' :
-                sla.status === 'warning' ? 'text-warning' :
-                sla.status === 'yellow' ? 'text-yellow-400' : 'text-success',
-              )}>
-                {formatDuration(sla.remaining)}
-              </span>
-            </div>
-            <div className="relative h-2 w-full rounded-full bg-white/5 overflow-hidden">
-              <div
-                className={cn('absolute left-0 top-0 h-full rounded-full transition-all duration-500', slaConf.bar)}
-                style={{ width: `${sla.completedPercent}%` }}
-              />
-              <div
-                className="absolute top-0 h-full w-0.5 bg-white/30"
-                style={{ left: `${sla.completedPercent}%` }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[10px] text-white/40">
-              <span>已消耗 {sla.completedPercent.toFixed(0)}%</span>
-              <span>剩余 {sla.percent.toFixed(0)}%</span>
-            </div>
-            {t.status === 'processing' && (
-              <button
-                type="button"
-                onClick={handleUrge}
-                className="w-full min-h-10 mt-1 rounded-lg bg-danger/10 border border-danger/20 text-xs font-medium text-danger hover:bg-danger/15 active:scale-[0.98] transition-all duration-300 flex items-center justify-center gap-1.5"
-              >
-                <Bell size={12} />
-                发起催办
-              </button>
             )}
           </div>
         </div>
@@ -493,13 +556,23 @@ export default function TicketDetail() {
             </button>
           )}
           {t.status === 'processing' && (
-            <button
-              type="button"
-              onClick={() => navigate(`/tickets/${t.id}/handle`)}
-              className="w-full min-h-12 rounded-xl bg-gradient-to-r from-brand to-brand/80 text-sm font-semibold text-white shadow-xl shadow-brand/30 hover:brightness-110 active:scale-[0.98] transition-all duration-300"
-            >
-              填写处理结果
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowReassignModal(true)}
+                className="flex-1 min-h-12 rounded-xl bg-white/5 border border-white/10 text-sm font-medium text-white/80 hover:bg-white/10 active:scale-[0.98] transition-all duration-300 flex items-center justify-center gap-1.5"
+              >
+                <UserCircle2 size={16} />
+                转派
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(`/tickets/${t.id}/handle`)}
+                className="flex-[1.5] min-h-12 rounded-xl bg-gradient-to-r from-brand to-brand/80 text-sm font-semibold text-white shadow-xl shadow-brand/30 hover:brightness-110 active:scale-[0.98] transition-all duration-300"
+              >
+                填写处理结果
+              </button>
+            </div>
           )}
           {t.status === 'completed' && (
             <div className="flex items-center justify-center gap-2 min-h-12 rounded-xl bg-success/10 border border-success/20 text-sm font-medium text-success">
@@ -508,6 +581,56 @@ export default function TicketDetail() {
           )}
         </div>
       </div>
+
+      {showReassignModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center animate-fade-in">
+          <div
+            className="w-full max-w-md mx-4 mb-0 sm:mb-0 rounded-t-2xl sm:rounded-2xl bg-[#151a33] border border-white/10 shadow-2xl animate-slide-up overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-white/5">
+              <div>
+                <h3 className="text-sm font-semibold text-white">转派工单</h3>
+                <p className="text-[11px] text-white/40 mt-0.5">选择新的处理人</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowReassignModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white/50 hover:bg-white/10 hover:text-white transition-all"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto p-2">
+              {reassignCandidates.map((user) => (
+                <button
+                  key={user.id}
+                  type="button"
+                  onClick={() => handleReassign(user)}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/5 transition-all duration-200 active:scale-[0.98]"
+                >
+                  <div className="shrink-0 h-10 w-10 rounded-full overflow-hidden bg-white/5 border border-white/10">
+                    {user.avatar ? (
+                      <img src={user.avatar} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-sm text-white/50 font-medium">
+                        {user.name?.slice(0, 1) ?? '?'}
+                      </div>
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1 text-left">
+                    <div className="text-sm font-medium text-white">{user.name}</div>
+                    <div className="text-[11px] text-white/40 mt-0.5">{user.department}</div>
+                  </div>
+                  <div className="shrink-0 text-[11px] text-brand/70 bg-brand/10 px-2 py-1 rounded-md border border-brand/20">
+                    选择
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {previewImg && (
         <div

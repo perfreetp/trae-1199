@@ -111,7 +111,7 @@ function RevisionRequestsSection({ catalogId }: { catalogId: string }) {
     pending: { badge: 'bg-brand/15 text-brand border border-brand/20', label: '待审批' },
     approved: { badge: 'bg-success/15 text-success border border-success/20', label: '已通过' },
     rejected: { badge: 'bg-danger/15 text-danger border border-danger/20', label: '已拒绝' },
-    published: { badge: 'bg-purple-500/15 text-purple-400 border border-purple-500/20', label: '已发布' },
+    published: { badge: 'bg-purple-500/15 text-purple-400 border border-purple-500/20', label: 'Published' },
   } as const;
 
   if (requests.length === 0) return null;
@@ -127,42 +127,82 @@ function RevisionRequestsSection({ catalogId }: { catalogId: string }) {
             <div
               key={r.id}
               className={cn(
-                'rounded-xl border p-3 transition-all',
+                'rounded-xl border p-3 transition-all overflow-hidden',
                 isPublished
                   ? 'bg-purple-500/[0.03] border-purple-500/20'
                   : 'bg-background-card border-white/5'
               )}
             >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className={cn('inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium', revTypeColor[r.type])}>
-                    {revTypeMap[r.type]}
-                  </span>
-                  <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium', statusCfg.badge)}>
-                    {isPublished && (
-                      <span className="font-bold mr-1">●</span>
+              {isPublished ? (
+                <>
+                  <div className="h-1.5 -mx-3 -mt-3 mb-3 bg-gradient-to-r from-purple-600 via-purple-500 to-purple-400" />
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold', statusCfg.badge)}>
+                      {statusCfg.label}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-white/40">发布人：</span>
+                      {r.publishedBy ? (
+                        <>
+                          <img
+                            src={r.publishedBy.avatar}
+                            alt={r.publishedBy.name}
+                            className="h-4 w-4 rounded-full bg-white/10"
+                          />
+                          <span className="text-[10px] text-white/70">{r.publishedBy.name}</span>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-white/40">系统发布</span>
+                      )}
+                      <span className="text-[10px] text-white/30">{r.publishedAt ? r.publishedAt.slice(0, 16) : '时间未知'}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs font-bold text-white mb-3">发布说明：{r.reason}</p>
+                  <div className="rounded-xl bg-white/[0.02] border border-white/10 p-3 mb-3">
+                    <div className="text-[10px] font-medium text-white/40 mb-1.5">审批意见摘要</div>
+                    {r.approvalSummary ? (
+                      <div className="text-[11px] text-white/60 leading-relaxed whitespace-pre-line">
+                        {r.approvalSummary.split('；').map((op, i) => (
+                          <div key={i}>{op}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-white/30">无审批意见</p>
                     )}
-                    {statusCfg.label}
-                  </span>
-                </div>
-              </div>
-              <p className={cn(
-                'text-xs mb-2 leading-relaxed',
-                isPublished ? 'text-white/90 font-semibold' : 'text-white/70'
-              )}>
-                {isPublished ? '已发布生效：' : ''}{r.reason}
-              </p>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <img
-                    src={r.applicant.avatar}
-                    alt={r.applicant.name}
-                    className="h-5 w-5 rounded-full bg-white/10"
-                  />
-                  <span className="text-[11px] text-white/60">{r.applicant.name}</span>
-                </div>
-                <span className="text-[10px] text-white/30">{r.createdAt.slice(0, 16)}</span>
-              </div>
+                  </div>
+                  <div className="rounded-xl bg-brand/[0.03] border border-brand/10 p-3">
+                    <div className="text-[10px] font-medium text-brand/70 mb-1.5">建议新内容</div>
+                    <p className="text-[11px] text-white/70 leading-relaxed">{r.suggestedContent}</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn('inline-flex rounded-md px-2 py-0.5 text-[10px] font-medium', revTypeColor[r.type])}>
+                        {revTypeMap[r.type]}
+                      </span>
+                      <span className={cn('inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium', statusCfg.badge)}>
+                        {statusCfg.label}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs mb-2 leading-relaxed text-white/70">
+                    {r.reason}
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <img
+                        src={r.applicant.avatar}
+                        alt={r.applicant.name}
+                        className="h-5 w-5 rounded-full bg-white/10"
+                      />
+                      <span className="text-[11px] text-white/60">{r.applicant.name}</span>
+                    </div>
+                    <span className="text-[10px] text-white/30">{r.createdAt.slice(0, 16)}</span>
+                  </div>
+                </>
+              )}
             </div>
           );
         })}

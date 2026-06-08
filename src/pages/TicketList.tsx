@@ -5,13 +5,13 @@ import { TopBar } from '@/components/TopBar';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AvatarGroup, type AvatarItem } from '@/components/AvatarGroup';
 import { departments, currentUser } from '@/data/mockData';
-import { useTicketStore } from '@/stores/ticketStore';
+import { useTicketStore, type SLAInfoExtended } from '@/stores/ticketStore';
 import type { AnomalyTicket } from '@/types';
 import { cn } from '@/lib/utils';
 
 type TabKey = 'pending' | 'processing' | 'completed';
 type LevelKey = AnomalyTicket['level'];
-type TimeoutKey = 'all' | 'overdue' | '1h' | '4h' | 'safe';
+type TimeoutKey = 'all' | 'overdue' | '1h' | '4h' | 'safe' | 'on-time' | 'overdue-completed';
 type HandlerKey = 'all' | 'mine' | 'unclaimed';
 
 const TABS: { key: TabKey; label: string }[] = [
@@ -27,12 +27,14 @@ const LEVELS: { key: LevelKey; label: string }[] = [
   { key: 'low', label: '低' },
 ];
 
-const TIMEOUT_OPTIONS: { key: TimeoutKey; label: string }[] = [
+const ALL_TIMEOUT_OPTIONS: { key: TimeoutKey; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'overdue', label: '已超时' },
   { key: '1h', label: '1小时内' },
   { key: '4h', label: '4小时内' },
   { key: 'safe', label: '无风险' },
+  { key: 'on-time', label: '按时完成' },
+  { key: 'overdue-completed', label: '超时完成' },
 ];
 
 const HANDLER_OPTIONS: { key: HandlerKey; label: string }[] = [
@@ -114,13 +116,24 @@ const slaBadgeStyle: Record<SLAStatus, string> = {
   safe: 'bg-white/5 text-white/40 border-white/10',
 };
 
-function matchesTimeout(sla: SLAInfo, key: TimeoutKey): boolean {
+interface SLAWithCompleted {
+  basic: SLAInfo;
+  extended: SLAInfoExtended;
+}
+
+function matchesTimeout(key: TimeoutKey, t: AnomalyTicket, slaMap: SLAWithCompleted): boolean {
   switch (key) {
     case 'all': return true;
-    case 'overdue': return sla.status === 'overdue';
-    case '1h': return sla.status === 'warning-1h';
-    case '4h': return sla.status === 'warning-4h';
-    case 'safe': return sla.status === 'safe';
+    case 'overdue': return slaMap.basic.status === 'overdue';
+    case '1h': return slaMap.basic.status === 'warning-1h';
+    case '4h': return slaMap.basic.status === 'warning-4h';
+    case 'safe': return slaMap.basic.status === 'safe';
+    case 'on-time':
+      if (t.status !== 'completed') return false;
+      return slaMap.extended.completedInfo?.overdueCompleted === false;
+    case 'overdue-completed':
+      if (t.status !== 'completed') return false;
+      return slaMap.extended.completedInfo?.overdueCompleted === true;
   }
 }
 
@@ -215,8 +228,14 @@ export default function TicketList() {
   const getTicketCounts = useTicketStore((s) => s.getTicketCounts);
   const storeStatusFilter = useTicketStore((s) => s.statusFilter);
   const setStatusFilter = useTicketStore((s) => s.setStatusFilter);
+  const storeListTab = useTicketStore((s) => s.listTab);
+  const setListTab = useTicketStore((s) => s.setListTab);
+  const getSLAInfo = useTicketStore((s) => s.getSLAInfo);
 
-  const [tab, setTab] = useState<TabKey>('pending');
+  const validTabs: TabKey[] = ['pending', 'processing', 'completed'];
+  const initialTab: TabKey = validTabs.includes(storeListTab as TabKey) ? (storeListTab as TabKey) : 'pending';
+
+  const [tab, setTab] = useState<TabKey>(initialTab);
   const [selectedLevels, setSelectedLevels] = useState<LevelKey[]>([]);
   const [deptId, setDeptId] = useState<string>('d0');
   const [timeoutFilter, setTimeoutFilter] = useState<TimeoutKey>('all');
@@ -226,14 +245,16 @@ export default function TicketList() {
   const [showHandlerDropdown, setShowHandlerDropdown] = useState(false);
 
   useEffect(() => {
-    if (storeStatusFilter !== 'all' && storeStatusFilter !== tab) {
-      setTab(storeStatusFilter);
+    if (storeStatusFilter !== 'all' && storeStatusFilter !== tab && validTabs.includes(storeStatusFilter as TabKey)) {
+      setTab(storeStatusFilter as TabKey);
     }
   }, []);
 
-  useEffect(() => {
-    setStatusFilter(tab);
-  }, [tab, setStatusFilter]);
+  const updateTab = (newTab: TabKey) => {
+    setTab(newTab);
+    setListTab(newTab);
+    setStatusFilter(newTab);
+  };
 
   const statusCounts = useMemo(() => getTicketCounts(), [tickets, getTicketCounts]);
 
@@ -244,13 +265,32 @@ export default function TicketList() {
     low: tickets.filter((t) => t.level === 'low').length,
   }), [tickets]);
 
+  const TIMEOUT_OPTIONS = useMemo(() => {
+    if (tab === 'completed') {
+      return ALL_TIMEOUT_OPTIONS;
+    }
+    return ALL_TIMEOUT_OPTIONS.filter((o) => o.key !== 'on-time' && o.key !== 'overdue-completed');
+  }, [tab]);
+
+  const slaCache = useMemo(() => {
+    const map = new Map<string, SLAWithCompleted>();
+    tickets.forEach((t) => {
+      map.set(t.id, {
+        basic: calcSLA(t.slaDeadline),
+        extended: getSLAInfo(t.id),
+      });
+    });
+    return map;
+  }, [tickets, getSLAInfo]);
+
   const list = useMemo(() => {
     return tickets.filter((t) => {
       if (t.status !== tab) return false;
       if (selectedLevels.length > 0 && !selectedLevels.includes(t.level)) return false;
       if (deptId !== 'd0' && t.departmentId !== deptId) return false;
-      const sla = calcSLA(t.slaDeadline);
-      if (!matchesTimeout(sla, timeoutFilter)) return false;
+      const sla = slaCache.get(t.id);
+      if (!sla) return false;
+      if (!matchesTimeout(timeoutFilter, t, sla)) return false;
       if (handlerFilter === 'mine') {
         if (!t.handler || t.handler.id !== currentUser.id) return false;
       } else if (handlerFilter === 'unclaimed') {
@@ -258,7 +298,7 @@ export default function TicketList() {
       }
       return true;
     });
-  }, [tickets, tab, selectedLevels, deptId, timeoutFilter, handlerFilter]);
+  }, [tickets, tab, selectedLevels, deptId, timeoutFilter, handlerFilter, slaCache]);
 
   const toggleLevel = (lv: LevelKey) => {
     setSelectedLevels((prev) =>
@@ -293,7 +333,7 @@ export default function TicketList() {
             <button
               key={t.key}
               type="button"
-              onClick={() => setTab(t.key)}
+              onClick={() => updateTab(t.key)}
               className={cn(
                 'flex-1 min-h-10 rounded-lg text-xs font-medium transition-all duration-300 relative',
                 tab === t.key ? 'bg-brand text-white shadow-lg shadow-brand/20' : 'text-white/60 hover:text-white/80',

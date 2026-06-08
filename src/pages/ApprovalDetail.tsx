@@ -49,6 +49,7 @@ export default function ApprovalDetail() {
   const { pendingList, approvedList, comments, submitApproval, publishChange, loadLists, addComment, loadComments } = useApprovalStore();
 
   const [commentContent, setCommentContent] = useState('');
+  const [mentionNames, setMentionNames] = useState<string[]>([]);
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const mentionRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -143,6 +144,7 @@ export default function ApprovalDetail() {
     } else {
       setCommentContent(commentContent + mentionText);
     }
+    setMentionNames((prev) => (prev.includes(user.name) ? prev : [...prev, user.name]));
     setShowMentionPicker(false);
   };
 
@@ -161,9 +163,11 @@ export default function ApprovalDetail() {
       showToast('请输入评论内容', 'warning');
       return;
     }
-    const mentions = extractMentions(commentContent);
-    addComment(req.id, commentContent.trim(), mentions, []);
+    const extracted = extractMentions(commentContent);
+    const allMentions = Array.from(new Set([...mentionNames, ...extracted]));
+    addComment(req.id, commentContent.trim(), allMentions, []);
     setCommentContent('');
+    setMentionNames([]);
     showToast('评论已发送', 'success');
   };
 

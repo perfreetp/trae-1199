@@ -105,6 +105,21 @@ export interface RevisionRequest {
   status: 'pending' | 'approved' | 'rejected' | 'published';
   approvals: ApprovalNode[];
   createdAt: string;
+  publishedBy?: User;
+  publishedAt?: string;
+  approvalSummary?: string;
+}
+
+export interface Notification {
+  id: string;
+  type: 'anomaly' | 'threshold' | 'approval' | 'revision' | 'subscription' | 'mention';
+  title: string;
+  content: string;
+  relatedId?: string;
+  relatedType?: 'ticket' | 'approval' | 'metric' | 'subscription';
+  relatedPath?: string;
+  isRead: boolean;
+  createdAt: string;
 }
 
 export interface TicketTimeline {
@@ -174,15 +189,7 @@ export interface Subscription {
   createdAt: string;
 }
 
-export interface Notification {
-  id: string;
-  type: 'anomaly' | 'threshold' | 'approval' | 'revision';
-  title: string;
-  content: string;
-  relatedId?: string;
-  isRead: boolean;
-  createdAt: string;
-}
+
 
 export interface FavoriteCategory {
   id: string;

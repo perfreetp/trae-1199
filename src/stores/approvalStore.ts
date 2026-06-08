@@ -1,9 +1,12 @@
 import { create } from 'zustand';
-import type { RevisionRequest, ApprovalNode, ApprovalComment, User } from '../types';
-import { mockRevisionRequests, mockCurrentUser } from '../data/mockData';
+import type { RevisionRequest, ApprovalNode, ApprovalComment, User, Notification } from '../types';
+import { mockRevisionRequests, mockCurrentUser, mockUsers } from '../data/mockData';
 import { useCatalogStore } from './catalogStore';
 import { useFavoriteStore } from './favoriteStore';
+import { useSubscriptionStore } from './subscriptionStore';
 import { loadPersist, savePersist } from './persist';
+
+const nowStr = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
 interface ApprovalState {
   pendingList: RevisionRequest[];
@@ -87,7 +90,18 @@ export const useApprovalStore = create<ApprovalState>((set, get) => {
 
     publishChange: (requestId) => {
       const updateStatus = (list: RevisionRequest[]) =>
-        list.map((r) => (r.id === requestId ? { ...r, status: 'published' as const } : r));
+        list.map((r) => {
+          if (r.id !== requestId) return r;
+          const passed = r.approvals.filter((a) => a.status === 'approved');
+          const opinions = passed.map((a) => `${a.approver.name}：${a.opinion ?? '同意'}`).join('；');
+          return {
+            ...r,
+            status: 'published' as const,
+            publishedBy: mockCurrentUser,
+            publishedAt: nowStr(),
+            approvalSummary: opinions || '审批全票通过',
+          };
+        });
 
       set((state) => {
         const newApproved = updateStatus(state.approvedList);
@@ -101,7 +115,7 @@ export const useApprovalStore = create<ApprovalState>((set, get) => {
     },
 
     addComment: (requestId, content, mentions, attachments) => {
-      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const now = nowStr();
       const newComment: ApprovalComment = {
         id: `ac${Date.now()}`,
         requestId,
@@ -115,6 +129,23 @@ export const useApprovalStore = create<ApprovalState>((set, get) => {
         const newComments = [newComment, ...state.comments];
         savePersist('approval_comments', newComments);
         return { comments: newComments };
+      });
+      mentions.forEach((mentionName, i) => {
+        const user = mockUsers.find((u) => u.name === mentionName);
+        if (user) {
+          const notification: Notification = {
+            id: `mention_${Date.now()}_${i}`,
+            type: 'mention',
+            title: '有人在审批中@了你',
+            content: `${mockCurrentUser.name}：${content.slice(0, 30)}${content.length > 30 ? '...' : ''}`,
+            relatedId: requestId,
+            relatedType: 'approval',
+            relatedPath: `/approvals/${requestId}`,
+            isRead: false,
+            createdAt: now,
+          };
+          useSubscriptionStore.getState().addNotification(notification);
+        }
       });
       useFavoriteStore.getState().addOperationLog('评论', '审批中心', requestId, content);
     },

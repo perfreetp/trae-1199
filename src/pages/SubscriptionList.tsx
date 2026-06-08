@@ -23,13 +23,15 @@ import {
 } from 'lucide-react';
 
 type TabKey = 'subscriptions' | 'records';
-type NotificationType = 'anomaly' | 'threshold' | 'approval' | 'revision';
+type NotificationType = 'anomaly' | 'threshold' | 'approval' | 'revision' | 'subscription' | 'mention';
 
 const notificationIcon: Record<NotificationType, { icon: React.ReactNode; bg: string }> = {
   anomaly: { icon: <AlertTriangle size={18} strokeWidth={2} />, bg: 'bg-danger/15 text-danger' },
   threshold: { icon: <Bell size={18} strokeWidth={2} />, bg: 'bg-warning/15 text-warning' },
   approval: { icon: <CheckSquare size={18} strokeWidth={2} />, bg: 'bg-success/15 text-success' },
   revision: { icon: <RefreshCw size={18} strokeWidth={2} />, bg: 'bg-brand/15 text-brand' },
+  subscription: { icon: <Bell size={18} strokeWidth={2} />, bg: 'bg-brand/15 text-brand' },
+  mention: { icon: <MessageSquare size={18} strokeWidth={2} />, bg: 'bg-cyan-500/15 text-cyan-400' },
 };
 
 const channelIcons = {
@@ -213,17 +215,35 @@ export default function SubscriptionList() {
             ) : (
               notifications.map((n) => {
                 const cfg = notificationIcon[n.type as NotificationType];
+                const isMention = n.type === 'mention';
+                const clickable = !!n.relatedPath;
+                const handleClick = () => {
+                  if (clickable) {
+                    markAsRead(n.id);
+                    navigate(n.relatedPath!);
+                  } else {
+                    markAsRead(n.id);
+                  }
+                };
                 return (
                   <div
                     key={n.id}
-                    onClick={() => markAsRead(n.id)}
+                    onClick={handleClick}
                     className={cn(
-                      'relative flex gap-3 rounded-2xl p-4 cursor-pointer transition-all duration-300',
-                      'bg-background-card border border-white/5 hover:border-white/10',
+                      'relative flex gap-3 rounded-2xl p-4 transition-all duration-300',
+                      'bg-background-card border border-white/5',
+                      clickable && 'cursor-pointer hover:border-white/10 active:scale-[0.99]',
                     )}
                   >
-                    <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl', cfg.bg)}>
-                      {cfg.icon}
+                    <div className="relative">
+                      <div className={cn('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl', cfg.bg)}>
+                        {cfg.icon}
+                      </div>
+                      {isMention && (
+                        <div className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-cyan-500 text-[10px] font-bold text-white border-2 border-background-card">
+                          @
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">

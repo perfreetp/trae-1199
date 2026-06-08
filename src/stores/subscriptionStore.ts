@@ -11,6 +11,7 @@ interface SubscriptionState {
   removeSubscription: (subId: string) => void;
   toggleSubscription: (subId: string) => void;
   updateSubscription: (subId: string, updates: Partial<Subscription>) => void;
+  addNotification: (notification: Notification) => void;
   markAsRead: (notificationId: string) => void;
   markAllAsRead: () => void;
   clearNotification: (notificationId: string) => void;
@@ -61,6 +62,16 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
       );
       savePersist('subscriptions', newSubscriptions);
       return { subscriptions: newSubscriptions };
+    }),
+
+  addNotification: (notification) =>
+    set((state) => {
+      const newNotifications = [notification, ...state.notifications];
+      savePersist('notifications', newNotifications);
+      return {
+        notifications: newNotifications,
+        unreadCount: newNotifications.filter((n) => !n.isRead).length,
+      };
     }),
 
   markAsRead: (notificationId) =>

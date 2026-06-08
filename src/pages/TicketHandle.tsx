@@ -40,6 +40,8 @@ export default function TicketHandle() {
   const { addOperationLog } = useFavoriteStore();
   const processTicket = useTicketStore((s) => s.processTicket);
   const completeTicket = useTicketStore((s) => s.completeTicket);
+  const setListTab = useTicketStore((s) => s.setListTab);
+  const setStatusFilter = useTicketStore((s) => s.setStatusFilter);
   const tickets = useTicketStore((s) => s.tickets);
   const currentTicket = tickets.find((t) => t.id === id);
 
@@ -103,13 +105,21 @@ export default function TicketHandle() {
     setImages(images.filter((_, i) => i !== idx));
   };
 
+  const handleBack = () => {
+    setListTab('processing');
+    setStatusFilter('processing');
+    navigate('/tickets');
+  };
+
   const handleSave = () => {
     if (!id) return;
     const reasonDetail = `[${rootCauseTypeMap[rootCause]}] ${reason}`;
     processTicket(id, reasonDetail, solution || undefined, images);
     addOperationLog('暂存', '工单处理', currentTicket?.title ?? id, `根因: ${reasonDetail}`);
     showToast('已暂存处理结果', 'success');
-    navigate(-1);
+    setListTab('processing');
+    setStatusFilter('processing');
+    navigate('/tickets');
   };
 
   const handleSubmit = () => {
@@ -128,6 +138,8 @@ export default function TicketHandle() {
     completeTicket(id, solutionDetail);
     addOperationLog('完成', '工单处理', currentTicket?.title ?? id, `根因: ${reasonDetail} | 方案: ${solutionDetail}`);
     showToast('工单处理完成', 'success');
+    setListTab('completed');
+    setStatusFilter('completed');
     navigate(`/tickets/${id}`);
   };
 
@@ -136,7 +148,7 @@ export default function TicketHandle() {
       <TopBar
         title="处理工单"
         showBack
-        onBack={() => navigate(-1)}
+        onBack={handleBack}
         actions={[]}
         onAction={() => {}}
       />
